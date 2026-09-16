@@ -23,14 +23,26 @@ services:
       # A allowlist cobre os dois pontos de vista: a porta interna 8000 (usada
       # pelo healthcheck e pelo contêiner de smoke, que compartilha esta rede)
       # e a porta publicada na máquina, que é o Host que o cliente MCP envia.
-      # Quando MCP_HOST_PORT=8000 as duas metades coincidem, e repetir um valor
-      # na lista é inofensivo.
+      # Quando MCP_HOST_PORT=8000 as duas metades coincidem; o servidor remove
+      # as repetições ao montar a lista final.
+      #
+      # Estes dois valores são DERIVADOS de MCP_HOST_PORT e não são o lugar de
+      # personalizar nada: defini-los no .env não teria efeito aqui. Para
+      # acrescentar um nome de host seu, use MCP_EXTRA_ALLOWED_* logo abaixo.
       MCP_ALLOWED_HOSTS: >-
         127.0.0.1:8000,localhost:8000,[::1]:8000,
         127.0.0.1:${MCP_HOST_PORT:-8000},localhost:${MCP_HOST_PORT:-8000},[::1]:${MCP_HOST_PORT:-8000}
       MCP_ALLOWED_ORIGINS: >-
         http://127.0.0.1:8000,http://localhost:8000,http://[::1]:8000,
         http://127.0.0.1:${MCP_HOST_PORT:-8000},http://localhost:${MCP_HOST_PORT:-8000},http://[::1]:${MCP_HOST_PORT:-8000}
+      # Complemento do usuário, lido do .env. O servidor SOMA estes valores aos
+      # de cima (e aos mínimos obrigatórios do código), então acrescentar um
+      # host aqui nunca remove localhost/127.0.0.1 nem desliga a proteção
+      # contra DNS rebinding. Exemplo:
+      #   MCP_EXTRA_ALLOWED_HOSTS=meu-host.local:8000
+      #   MCP_EXTRA_ALLOWED_ORIGINS=http://meu-host.local:8000
+      MCP_EXTRA_ALLOWED_HOSTS: ${MCP_EXTRA_ALLOWED_HOSTS:-}
+      MCP_EXTRA_ALLOWED_ORIGINS: ${MCP_EXTRA_ALLOWED_ORIGINS:-}
     healthcheck:
       # Verifica apenas se o processo responde. Não consulta a PokéAPI e não
       # testa o protocolo MCP (para isso, use scripts/smoke_test.py).
@@ -49,7 +61,10 @@ services:
     restart: unless-stopped
 
   # Testes automatizados, sem rede externa e sem Python instalado na máquina:
-  #   docker compose --profile test run --rm tests
+  #   docker compose --profile test run --build --rm tests
+  # O --build garante que o código e os testes da imagem são os atuais: sem
+  # ele, o Compose reaproveita uma imagem dev construída antes das suas
+  # alterações.
   tests:
     build:
       context: .
@@ -59,7 +74,7 @@ services:
     command: ["uv", "run", "--no-sync", "pytest", "-v"]
 
   # Smoke test pelo protocolo MCP contra o contêiner já em execução:
-  #   docker compose --profile test run --rm smoke
+  #   docker compose --profile test run --build --rm smoke
   # network_mode compartilha a rede do servidor, então "localhost:8000" dentro
   # deste contêiner é o próprio servidor e o cabeçalho Host continua na allowlist.
   smoke:

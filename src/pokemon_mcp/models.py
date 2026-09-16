@@ -68,7 +68,12 @@ class Pokemon(BaseModel):
 
     id: int = Field(description="Identificador numérico na PokéAPI.")
     name: str = Field(description="Nome canônico.")
-    types: list[str] = Field(description="Tipos do Pokémon, em ordem de slot.")
+    types: list[str] = Field(
+        description=(
+            "Tipos do Pokémon, ordenados pelo campo 'slot' da PokéAPI "
+            "(o servidor ordena; não depende da ordem em que a API respondeu)."
+        )
+    )
     height_m: float = Field(description="Altura em metros (origem: decímetros).")
     weight_kg: float = Field(description="Peso em quilogramas (origem: hectogramas).")
     abilities: list[PokemonAbility] = Field(
@@ -228,22 +233,37 @@ def _resource_names(value: Any, label: str, url: str) -> list[str]:
     return names
 
 
-def _nested_names(value: Any, label: str, inner_key: str, url: str) -> list[str]:
-    """Nomes em `entry[inner_key]['name']`, como em `types[].type.name`."""
-    entries = _as_list(value, label, url)
-    names: list[str] = []
+def _types_in_slot_order(value: Any, url: str) -> list[str]:
+    """Nomes de `types[].type.name`, ordenados pelo campo `slot`.
+
+    O schema da Tool promete os tipos "em ordem de slot". A PokéAPI costuma
+    devolver a lista já ordenada, mas promessa herdada da resposta não é
+    promessa: a ordenação é feita aqui. `slot` é obrigatório e precisa ser um
+    inteiro positivo (na base real os tipos usam os slots 1 e 2).
+    """
+    entries = _as_list(value, "types", url)
+    ordered: list[tuple[int, str]] = []
     for index, entry in enumerate(entries):
-        item = _as_dict(entry, f"{label}[{index}]", url)
-        inner_label = f"{label}[{index}].{inner_key}"
-        inner = _as_dict(_require(item, inner_key, url, inner_label), inner_label, url)
-        names.append(
-            _as_str(
-                _require(inner, "name", url, f"{inner_label}.name"),
-                f"{inner_label}.name",
-                url,
-            )
+        label = f"types[{index}]"
+        item = _as_dict(entry, label, url)
+        slot = _as_int(
+            _require(item, "slot", url, f"{label}.slot"),
+            f"{label}.slot",
+            url,
+            minimum=1,
         )
-    return names
+        inner_label = f"{label}.type"
+        inner = _as_dict(_require(item, "type", url, inner_label), inner_label, url)
+        name = _as_str(
+            _require(inner, "name", url, f"{inner_label}.name"),
+            f"{inner_label}.name",
+            url,
+        )
+        ordered.append((slot, name))
+
+    # `sorted` é estável: se dois tipos viessem com o mesmo slot (a PokéAPI não
+    # produz isso), eles mantêm a ordem de chegada em vez de trocar de lugar.
+    return [name for _, name in sorted(ordered, key=lambda pair: pair[0])]
 
 
 def build_pokemon(payload: dict[str, Any], source_url: str) -> Pokemon:
@@ -252,6 +272,8 @@ def build_pokemon(payload: dict[str, Any], source_url: str) -> Pokemon:
     Todos os campos que o schema da Tool promete são obrigatórios: `id`,
     `name`, `height`, `weight`, `types`, `abilities` e `stats`. Um campo
     ausente ou com tipo errado vira `MalformedResponseError`.
+
+    `types` sai ordenado pelo `slot` de cada entrada, como o schema promete.
 
     Limites numéricos: `id` é positivo; `height` e `weight` não podem ser
     negativos. Zero é aceito em `weight` porque existe na base real
@@ -267,9 +289,7 @@ def build_pokemon(payload: dict[str, Any], source_url: str) -> Pokemon:
         _require(payload, "weight", source_url), "weight", source_url, minimum=0
     )
 
-    types = _nested_names(
-        _require(payload, "types", source_url), "types", "type", source_url
-    )
+    types = _types_in_slot_order(_require(payload, "types", source_url), source_url)
 
     abilities: list[PokemonAbility] = []
     # A lista pode vir vazia de verdade: nove Pokémon da base (por exemplo

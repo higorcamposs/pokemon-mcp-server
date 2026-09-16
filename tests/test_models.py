@@ -194,11 +194,57 @@ def test_build_pokemon_rejects_malformed_abilities(
         ([{"slot": 1, "type": {"url": "..."}}], "falta o nome do tipo"),
         ([{"slot": 1, "type": {"name": 13}}], "nome do tipo não é texto"),
         ([{"slot": 1, "type": "electric"}], "type não é objeto"),
+        ([{"type": {"name": "grass"}}], "falta o slot"),
+        ([{"slot": 0, "type": {"name": "grass"}}], "slot começa em 1"),
+        ([{"slot": -1, "type": {"name": "grass"}}], "slot negativo"),
+        ([{"slot": "1", "type": {"name": "grass"}}], "slot em texto"),
+        ([{"slot": 1.5, "type": {"name": "grass"}}], "slot fracionário"),
+        ([{"slot": True, "type": {"name": "grass"}}], "bool não é slot"),
     ],
 )
 def test_build_pokemon_rejects_malformed_types(types: Any, why: str) -> None:
     with pytest.raises(MalformedResponseError):
         build_pokemon(pokemon_with(types=types), URL)
+
+
+def test_build_pokemon_orders_types_by_slot() -> None:
+    """A ordem prometida no schema é garantida pelo servidor, não herdada.
+
+    Bulbasaur é grass/poison: slot 1 é grass. Aqui a resposta chega com os
+    slots fora de ordem, e o resultado ainda precisa sair em ordem de slot.
+    """
+    payload = pokemon_with(
+        types=[
+            {"slot": 2, "type": {"name": "poison"}},
+            {"slot": 1, "type": {"name": "grass"}},
+        ]
+    )
+
+    assert build_pokemon(payload, URL).types == ["grass", "poison"]
+
+
+def test_build_pokemon_keeps_types_already_in_order() -> None:
+    """O caso normal da PokéAPI continua igual: nada é embaralhado."""
+    payload = pokemon_with(
+        types=[
+            {"slot": 1, "type": {"name": "grass"}},
+            {"slot": 2, "type": {"name": "poison"}},
+        ]
+    )
+
+    assert build_pokemon(payload, URL).types == ["grass", "poison"]
+
+
+def test_build_pokemon_accepts_non_contiguous_slots() -> None:
+    """Ordenar é por valor de slot, não por posição: 1 e 3 não viram erro."""
+    payload = pokemon_with(
+        types=[
+            {"slot": 3, "type": {"name": "flying"}},
+            {"slot": 1, "type": {"name": "grass"}},
+        ]
+    )
+
+    assert build_pokemon(payload, URL).types == ["grass", "flying"]
 
 
 @pytest.mark.parametrize(

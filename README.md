@@ -93,14 +93,19 @@ docker compose logs -f pokemon-mcp-server
 Testes automatizados, sem internet e com respostas HTTP simuladas:
 
 ```bash
-docker compose --profile test run --rm tests
+docker compose --profile test run --build --rm tests
 ```
+
+O `--build` não é enfeite: sem ele o Compose reaproveita a imagem `dev` que já
+existir na máquina, e você pode acabar rodando os testes de uma versão anterior
+do código. Ele reconstrói usando o cache de camadas do Docker, então continua
+rápido — não é preciso `--no-cache`.
 
 Smoke test pelo protocolo MCP de verdade, contra o contêiner em execução
 (faz poucas consultas reais à PokéAPI):
 
 ```bash
-docker compose --profile test run --rm smoke
+docker compose --profile test run --build --rm smoke
 ```
 
 O smoke test usa o cliente do SDK oficial: ele conecta no endpoint HTTP,
@@ -211,6 +216,7 @@ pokemon-mcp-server/
 ├── docs/
 │   ├── conectar-cliente.md
 │   ├── roteiro-prints.md
+│   ├── validacao.md
 │   └── versoes-e-referencias.md
 ├── .github/workflows/  # CI: instala o projeto e roda os testes
 ├── Dockerfile          # runtime (não root) e dev (testes)
@@ -233,8 +239,41 @@ como `.env`. As principais:
 | `POKEAPI_CACHE_MAX_ENTRIES` | `256` | Tamanho máximo do cache (descarte LRU). |
 | `MCP_HOST_PORT` | `8000` | Porta publicada na sua máquina, sempre em `127.0.0.1`. |
 | `MCP_LOG_LEVEL` | `INFO` | Nível de log. |
-| `MCP_ALLOWED_HOSTS` | derivada de `MCP_HOST_PORT` | Allowlist do cabeçalho `Host` (proteção contra DNS rebinding). |
-| `MCP_ALLOWED_ORIGINS` | derivada de `MCP_HOST_PORT` | Allowlist do cabeçalho `Origin`. |
+| `MCP_ALLOWED_HOSTS` | derivada de `MCP_HOST_PORT` pelo `compose.yaml` | Allowlist do cabeçalho `Host` (proteção contra DNS rebinding). Definir no `.env` **não** tem efeito sob o Compose. |
+| `MCP_ALLOWED_ORIGINS` | derivada de `MCP_HOST_PORT` pelo `compose.yaml` | O mesmo, para o cabeçalho `Origin`. |
+| `MCP_EXTRA_ALLOWED_HOSTS` | vazio | **É aqui que você acrescenta um host seu**, pelo `.env`. O valor é somado à allowlist. |
+| `MCP_EXTRA_ALLOWED_ORIGINS` | vazio | O mesmo, para `Origin`. |
+
+As três variáveis numéricas precisam ser números finitos e não negativos
+(`POKEAPI_TIMEOUT_SECONDS` precisa ser maior que zero; nas duas do cache, `0`
+desliga o cache). Um valor fora disso — texto, negativo, `nan`, `inf` — não
+chega ao cliente HTTP nem ao cache: o servidor registra um aviso no log e usa o
+padrão da tabela.
+
+### As allowlists de `Host` e `Origin`
+
+A lista que o servidor usa é a **soma** de três partes, nesta ordem:
+
+1. os mínimos obrigatórios, fixos em `src/pokemon_mcp/__main__.py`
+   (`127.0.0.1:8000`, `localhost:8000`, `[::1]:8000`) — a porta **interna** do
+   contêiner, de que o healthcheck e o contêiner de smoke dependem;
+2. `MCP_ALLOWED_HOSTS`/`MCP_ALLOWED_ORIGINS`, que o `compose.yaml` deriva de
+   `MCP_HOST_PORT` (a porta publicada na sua máquina);
+3. `MCP_EXTRA_ALLOWED_HOSTS`/`MCP_EXTRA_ALLOWED_ORIGINS`, lidas do seu `.env`.
+
+Somar em vez de substituir é proposital: assim um `.env` mal preenchido
+acrescenta um host, mas nunca remove `localhost` da lista e derruba o
+laboratório sem explicação. Repetições e espaços são descartados.
+
+```dotenv
+# .env
+MCP_EXTRA_ALLOWED_HOSTS=meu-host.local:8000
+MCP_EXTRA_ALLOWED_ORIGINS=http://meu-host.local:8000
+```
+
+A proteção contra DNS rebinding continua ligada em qualquer combinação. Para
+ver a lista final, leia as linhas `Host allowlist:` e `Origin allowlist:` em
+`docker compose logs pokemon-mcp-server`.
 
 **Dentro do contêiner, o endereço é fixo:** `0.0.0.0:8000` e endpoint `/mcp`.
 Não existe variável para mudar isso, e é de propósito: o healthcheck, o smoke
@@ -272,8 +311,8 @@ máquina, com `MCP_HOST_PORT` (use se a 8000 já estiver ocupada). Ao mudar:
 | Sintoma | Causa provável | O que fazer |
 | --- | --- | --- |
 | `docker compose ps` mostra `unhealthy` | O processo não subiu. | `docker compose logs pokemon-mcp-server` e leia o traceback. |
-| O cliente não conecta e o log do servidor mostra `Invalid Host header` (HTTP 421) | O `Host` usado não está em `MCP_ALLOWED_HOSTS`. | Conecte por `http://localhost:8000/mcp` ou `http://127.0.0.1:8000/mcp`. Se precisar de outro nome, acrescente-o à allowlist — **não** desligue a proteção. |
-| HTTP 403 com `Invalid Origin header` | Cliente de navegador com `Origin` fora da lista. | Acrescente a origem exata a `MCP_ALLOWED_ORIGINS`. |
+| O cliente não conecta e o log do servidor mostra `Invalid Host header` (HTTP 421) | O `Host` usado não está na allowlist. | Conecte por `http://localhost:8000/mcp` ou `http://127.0.0.1:8000/mcp`. Se precisar de outro nome, acrescente-o em `MCP_EXTRA_ALLOWED_HOSTS` no `.env` — **não** desligue a proteção. |
+| HTTP 403 com `Invalid Origin header` | Cliente de navegador com `Origin` fora da lista. | Acrescente a origem exata a `MCP_EXTRA_ALLOWED_ORIGINS` no `.env`. |
 | Porta 8000 ocupada | Outro serviço local. | Defina `MCP_HOST_PORT=8001` (no `.env` ou no ambiente) e suba de novo. As allowlists acompanham; o endpoint vira `http://localhost:8001/mcp`. |
 | Tool responde "A PokéAPI está indisponível" | Sem internet no contêiner ou PokéAPI fora do ar. | Teste `curl https://pokeapi.co/api/v2/pokemon/pikachu/` na máquina. |
 | Tool responde "Argumento inválido" | Entrada com espaço interno, URL, caminho ou acento. | Use nome canônico (`mr-mime`) ou número positivo. |
@@ -289,6 +328,12 @@ Em resumo: Python 3.12, SDK oficial `mcp` 2.2.0 (linha 2.x, classe
 fixadas no `uv.lock` (versão e hash); as imagens base do Docker usam tags de
 linha (`python:3.12-slim-bookworm`), que continuam em 3.12 mas recebem
 atualizações — elas não estão fixadas por digest.
+
+## Registro de validação
+
+O que já foi verificado, onde e com qual resultado está em
+**[docs/validacao.md](docs/validacao.md)** — incluindo a checklist para
+preencher com a sua própria execução local.
 
 ## Material da apresentação
 

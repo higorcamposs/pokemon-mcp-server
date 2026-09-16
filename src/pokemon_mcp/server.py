@@ -8,6 +8,7 @@ IA do outro lado da conexão.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -62,26 +63,68 @@ BuiltT = TypeVar("BuiltT")
 """Modelo devolvido por `models.build_*`."""
 
 
-def _env_float(name: str, default: float) -> float:
+# --- leitura das variáveis numéricas --------------------------------------
+#
+# Verificar apenas o formato não basta: `float("nan")` e `float("inf")` são
+# conversões válidas em Python e chegariam intactas ao `httpx2.Timeout` (timeout
+# que nunca expira, ou que falha de imediato) e ao `TTLCache` (entradas que
+# nunca vencem). Um valor negativo tem o mesmo problema. Nos três casos o
+# servidor registra um aviso e segue com o padrão seguro, em vez de subir com
+# uma configuração impossível.
+
+
+def _env_float(name: str, default: float, *, allow_zero: bool) -> float:
+    """Lê uma variável numérica em segundos. Recusa NaN, ±inf e negativos.
+
+    `allow_zero` diz se zero tem significado para esta variável: o TTL do cache
+    aceita 0 (desliga o cache), o tempo limite das consultas não.
+    """
     raw = os.getenv(name)
     if raw is None or not raw.strip():
         return default
+
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
         logger.warning("%s=%r não é numérico; usando %s", name, raw, default)
         return default
 
+    # Cobre NaN, +inf e -inf, que `float()` aceita sem reclamar.
+    if not math.isfinite(value):
+        logger.warning("%s=%r não é um número finito; usando %s", name, raw, default)
+        return default
 
-def _env_int(name: str, default: int) -> int:
+    if value < 0.0 or (value == 0.0 and not allow_zero):
+        limite = (
+            "não pode ser negativo" if allow_zero else "precisa ser maior que zero"
+        )
+        logger.warning("%s=%r %s; usando %s", name, raw, limite, default)
+        return default
+
+    return value
+
+
+def _env_int(name: str, default: int, *, allow_zero: bool) -> int:
+    """Lê uma variável numérica inteira. Recusa negativos (e 'nan'/'inf')."""
     raw = os.getenv(name)
     if raw is None or not raw.strip():
         return default
+
+    # `int()` já rejeita "nan", "inf" e "1e3" com ValueError.
     try:
-        return int(raw)
+        value = int(raw)
     except ValueError:
         logger.warning("%s=%r não é inteiro; usando %s", name, raw, default)
         return default
+
+    if value < 0 or (value == 0 and not allow_zero):
+        limite = (
+            "não pode ser negativo" if allow_zero else "precisa ser maior que zero"
+        )
+        logger.warning("%s=%r %s; usando %s", name, raw, limite, default)
+        return default
+
+    return value
 
 
 @dataclass
@@ -99,12 +142,16 @@ def create_pokeapi_client() -> PokeAPIClient:
     """
     return PokeAPIClient(
         base_url=os.getenv("POKEAPI_BASE_URL", DEFAULT_BASE_URL),
-        timeout_seconds=_env_float("POKEAPI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS),
+        # O tempo limite precisa ser positivo: zero significaria "sem tempo".
+        timeout_seconds=_env_float(
+            "POKEAPI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS, allow_zero=False
+        ),
+        # TTL e tamanho máximo aceitam zero: é assim que se desliga o cache.
         cache_ttl_seconds=_env_float(
-            "POKEAPI_CACHE_TTL_SECONDS", DEFAULT_CACHE_TTL_SECONDS
+            "POKEAPI_CACHE_TTL_SECONDS", DEFAULT_CACHE_TTL_SECONDS, allow_zero=True
         ),
         cache_max_entries=_env_int(
-            "POKEAPI_CACHE_MAX_ENTRIES", DEFAULT_CACHE_MAX_ENTRIES
+            "POKEAPI_CACHE_MAX_ENTRIES", DEFAULT_CACHE_MAX_ENTRIES, allow_zero=True
         ),
     )
 

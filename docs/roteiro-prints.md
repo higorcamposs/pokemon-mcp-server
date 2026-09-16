@@ -117,8 +117,12 @@ Alternativa sem Node.js: capture a saída do smoke test, que também lista as
 ferramentas descobertas:
 
 ```bash
-docker compose --profile test run --rm smoke
+docker compose --profile test run --build --rm smoke
 ```
+
+O `--build` garante que a imagem usada contém o código e os scripts atuais;
+sem ele o Compose pode reaproveitar uma imagem `dev` construída antes das suas
+últimas alterações — e o print mostraria a versão errada.
 
 **Conceito demonstrado:** é isto que MCP resolve. O cliente não foi programado
 para conhecer este servidor: ele perguntou quais capacidades existem e recebeu
