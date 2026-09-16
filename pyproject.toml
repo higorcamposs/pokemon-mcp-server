@@ -1,0 +1,36 @@
+[project]
+name = "pokemon-mcp-server"
+version = "0.1.0"
+description = "MCP Server didático que consulta a PokéAPI e expõe Tools, um Resource e um Prompt pelo protocolo MCP."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+dependencies = [
+    # SDK oficial Python do MCP (linha 2.x).
+    "mcp==2.2.0",
+    # Cliente HTTP assincrono. httpx2 e a continuacao do httpx e ja e
+    # dependencia direta do SDK, entao o laboratorio nao carrega duas libs HTTP.
+    "httpx2==2.13.0",
+    "pydantic==2.13.5",
+]
+
+[project.scripts]
+pokemon-mcp-server = "pokemon_mcp.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    # Fornece o plugin pytest usado pelos testes assincronos (@pytest.mark.anyio).
+    "anyio==4.15.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pokemon_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,66 @@
+name: pokemon-mcp
+
+services:
+  pokemon-mcp-server:
+    build:
+      context: .
+      target: runtime
+    image: pokemon-mcp-server:0.1.0
+    container_name: pokemon-mcp-server
+    # Publica a porta SOMENTE no loopback da máquina. Este é um laboratório
+    # local: não troque por "8000:8000", que exporia o serviço na rede.
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      POKEAPI_BASE_URL: ${POKEAPI_BASE_URL:-https://pokeapi.co/api/v2/}
+      POKEAPI_TIMEOUT_SECONDS: ${POKEAPI_TIMEOUT_SECONDS:-10}
+      POKEAPI_CACHE_TTL_SECONDS: ${POKEAPI_CACHE_TTL_SECONDS:-300}
+      POKEAPI_CACHE_MAX_ENTRIES: ${POKEAPI_CACHE_MAX_ENTRIES:-256}
+      MCP_HOST: ${MCP_HOST:-0.0.0.0}
+      MCP_PORT: ${MCP_PORT:-8000}
+      MCP_PATH: ${MCP_PATH:-/mcp}
+      MCP_LOG_LEVEL: ${MCP_LOG_LEVEL:-INFO}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-127.0.0.1:8000,localhost:8000,[::1]:8000}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-http://127.0.0.1:8000,http://localhost:8000,http://[::1]:8000}
+    healthcheck:
+      # Verifica apenas se o processo responde. Não consulta a PokéAPI e não
+      # testa o protocolo MCP (para isso, use scripts/smoke_test.py).
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request, sys
+          with urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=3) as r:
+              sys.exit(0 if r.status == 200 else 1)
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # Testes automatizados, sem rede externa e sem Python instalado na máquina:
+  #   docker compose --profile test run --rm tests
+  tests:
+    build:
+      context: .
+      target: dev
+    image: pokemon-mcp-server:0.1.0-dev
+    profiles: ["test"]
+    command: ["uv", "run", "--no-sync", "pytest", "-v"]
+
+  # Smoke test pelo protocolo MCP contra o contêiner já em execução:
+  #   docker compose --profile test run --rm smoke
+  # network_mode compartilha a rede do servidor, então "localhost:8000" dentro
+  # deste contêiner é o próprio servidor e o cabeçalho Host continua na allowlist.
+  smoke:
+    build:
+      context: .
+      target: dev
+    image: pokemon-mcp-server:0.1.0-dev
+    profiles: ["test"]
+    network_mode: "service:pokemon-mcp-server"
+    depends_on:
+      pokemon-mcp-server:
+        condition: service_healthy
+    command: ["uv", "run", "--no-sync", "python", "scripts/smoke_test.py"]
