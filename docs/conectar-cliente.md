@@ -16,6 +16,11 @@ laboratório.
 recusado com **HTTP 421** até ser acrescentado a `MCP_ALLOWED_HOSTS`: é a
 proteção contra DNS rebinding do SDK, e ela deve continuar ligada.
 
+Se você publicou o serviço em outra porta (`MCP_HOST_PORT` no Compose), troque
+`8000` pela porta escolhida em todas as URLs desta página. O Compose já
+acrescenta essa porta às allowlists de `Host` e `Origin`; a porta de dentro do
+contêiner continua sendo 8000.
+
 O servidor precisa estar no ar antes de conectar:
 
 ```bash
@@ -32,8 +37,12 @@ smoke test, que fala MCP de verdade:
 docker compose --profile test run --rm smoke
 ```
 
-Se ele passa, o servidor está correto e qualquer falha seguinte é de
-configuração do cliente.
+Se ele passa, os cenários exercitados funcionaram nesse ambiente: conexão,
+negociação de protocolo, descoberta, as três Tools, o Resource e o Prompt. Isso
+é uma evidência forte, mas não uma prova de que tudo funciona em qualquer
+lugar. Uma falha em outro cliente ainda pode envolver transporte, versão do
+protocolo, configuração, proxy ou comportamento específico daquela integração —
+por isso vale olhar também os logs do servidor ao reproduzir o erro.
 
 ## Testar com o MCP Inspector
 

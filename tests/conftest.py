@@ -27,13 +27,22 @@ def load_fixture(name: str) -> dict[str, Any]:
 def pokeapi_fixtures() -> dict[str, dict[str, Any]]:
     return {
         "pokemon/pikachu": load_fixture("pokemon_pikachu"),
+        # Na PokéAPI, /pokemon/25/ devolve exatamente a mesma ficha que
+        # /pokemon/pikachu/. Consultar por número precisa funcionar de verdade,
+        # e não apenas gerar outra chave de cache.
+        "pokemon/25": load_fixture("pokemon_pikachu"),
         "ability/static": load_fixture("ability_static"),
         "type/electric": load_fixture("type_electric"),
     }
 
 
 class RecordingHandler:
-    """Handler do MockTransport que conta as requisições que chegaram."""
+    """Handler do MockTransport que conta as requisições que chegaram.
+
+    `responses` é lido a cada chamada, então um teste pode trocar a resposta de
+    uma URL entre duas requisições (usado para provar que uma resposta
+    malformada não fica presa no cache).
+    """
 
     def __init__(self, responses: dict[str, dict[str, Any]]) -> None:
         self.responses = responses

@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Annotated, Final
+from typing import Annotated, Any, Final, TypeVar
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
@@ -57,6 +57,9 @@ NameOrId = Annotated[
 
 READ_ONLY: Final = ToolAnnotations(read_only_hint=True, open_world_hint=True)
 """Somente leitura. `open_world_hint=True` porque os dados vêm de uma API externa."""
+
+BuiltT = TypeVar("BuiltT")
+"""Modelo devolvido por `models.build_*`."""
 
 
 def _env_float(name: str, default: float) -> float:
@@ -149,6 +152,30 @@ def _to_tool_error(exc: PokeAPIError) -> ToolError:
     return ToolError(f"Falha ao consultar a PokéAPI: {exc}")
 
 
+async def _consult(
+    ctx: Context[AppContext],
+    resource: str,
+    name_or_id: str,
+    build: Callable[[dict[str, Any], str], BuiltT],
+) -> BuiltT:
+    """Consulta a PokéAPI e valida a resposta com o `build_*` do recurso.
+
+    Um `MalformedResponseError` significa que o JSON guardado no cache não
+    serve para esta Tool, então a entrada é descartada: a próxima chamada
+    consulta a PokéAPI de novo em vez de reaproveitar a resposta quebrada até
+    o fim do TTL.
+    """
+    client = ctx.request_context.lifespan_context.pokeapi
+    try:
+        payload, url = await client.fetch(resource, name_or_id)
+        return build(payload, url)
+    except MalformedResponseError as exc:
+        client.invalidate(resource, name_or_id)
+        raise _to_tool_error(exc) from exc
+    except PokeAPIError as exc:
+        raise _to_tool_error(exc) from exc
+
+
 @mcp.tool(
     title="Consultar Pokémon",
     annotations=READ_ONLY,
@@ -157,12 +184,7 @@ async def get_pokemon(name_or_id: NameOrId, ctx: Context[AppContext]) -> models.
     """Consulta um Pokémon na PokéAPI e devolve identificador, nome, tipos,
     altura em metros, peso em quilogramas, habilidades possíveis (incluindo a
     habilidade oculta) e atributos base."""
-    client = ctx.request_context.lifespan_context.pokeapi
-    try:
-        payload, url = await client.fetch("pokemon", name_or_id)
-        return models.build_pokemon(payload, url)
-    except PokeAPIError as exc:
-        raise _to_tool_error(exc) from exc
+    return await _consult(ctx, "pokemon", name_or_id, models.build_pokemon)
 
 
 @mcp.tool(
@@ -173,12 +195,7 @@ async def get_ability(name_or_id: NameOrId, ctx: Context[AppContext]) -> models.
     """Consulta uma habilidade na PokéAPI e devolve identificador, nome e a
     descrição disponível em inglês, informando o idioma e a origem do texto.
     Nenhuma descrição é traduzida ou inventada pelo servidor."""
-    client = ctx.request_context.lifespan_context.pokeapi
-    try:
-        payload, url = await client.fetch("ability", name_or_id)
-        return models.build_ability(payload, url)
-    except PokeAPIError as exc:
-        raise _to_tool_error(exc) from exc
+    return await _consult(ctx, "ability", name_or_id, models.build_ability)
 
 
 @mcp.tool(
@@ -189,12 +206,7 @@ async def get_type(name_or_id: NameOrId, ctx: Context[AppContext]) -> models.Pok
     """Consulta um tipo elemental na PokéAPI e devolve as seis relações de dano:
     recebido (double/half/no_damage_from) e causado (double/half/no_damage_to).
     São relações do tipo isolado, não de um Pokémon específico."""
-    client = ctx.request_context.lifespan_context.pokeapi
-    try:
-        payload, url = await client.fetch("type", name_or_id)
-        return models.build_type(payload, url)
-    except PokeAPIError as exc:
-        raise _to_tool_error(exc) from exc
+    return await _consult(ctx, "type", name_or_id, models.build_type)
 
 
 GUIDE: Final = """# Pokémon MCP Server
@@ -234,7 +246,8 @@ servidor converte para metros e quilogramas.
 - Não há simulador de batalhas. Relações de tipo não determinam vencedores.
 - As habilidades listadas em `get_pokemon` são as possibilidades da espécie;
   um Pokémon individual tem apenas uma ativa por vez.
-- `get_type` descreve um tipo isolado, sem combinar dois tipos, habilidades,
+- `get_type` descreve um tipo isolado. Ele não considera a combinação de
+  tipos de um Pokémon específico (que pode ter um ou dois), habilidades,
   itens ou condições de campo.
 - O cache é em memória e se perde ao reiniciar o contêiner.
 - Só há três Tools. Movimentos, evoluções e demais recursos da PokéAPI ficam

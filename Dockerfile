@@ -23,12 +23,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # --- Imagem de execução: Python slim, sem uv e sem ferramentas de build. ---
 FROM python:3.12-slim-bookworm AS runtime
 
+# O endereço interno (0.0.0.0:8000 e /mcp) é fixo no código do servidor, em
+# src/pokemon_mcp/__main__.py: não há variável de ambiente para mudá-lo.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PATH="/app/.venv/bin:$PATH" \
-    MCP_HOST=0.0.0.0 \
-    MCP_PORT=8000 \
-    MCP_PATH=/mcp
+    PATH="/app/.venv/bin:$PATH"
 
 # Usuário não root.
 RUN groupadd --system --gid 1001 pokemon \

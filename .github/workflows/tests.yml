@@ -1,0 +1,46 @@
+# CI mínima do laboratório: provar que o projeto instala e que a suíte passa.
+#
+# Nada aqui depende da PokéAPI real. Os testes usam respostas gravadas em
+# tests/fixtures e um transporte HTTP simulado, justamente para que a
+# disponibilidade de uma API externa nunca vire condição de merge. O smoke test
+# de verdade (scripts/smoke_test.py) continua sendo executado à mão, com o
+# contêiner no ar.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    name: pytest (Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar uv (instalador oficial da Astral)
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Instalar as dependências exatamente como estão no uv.lock
+        run: uv sync --locked
+
+      - name: Rodar os testes
+        run: uv run pytest -v
+
+  docker:
+    name: docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Só constrói a imagem de execução: garante que o Dockerfile continua
+      # válido sem subir contêiner nem publicar nada.
+      - name: Construir a imagem de execução
+        run: docker build --target runtime -t pokemon-mcp-server:ci .

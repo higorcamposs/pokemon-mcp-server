@@ -9,19 +9,28 @@ services:
     container_name: pokemon-mcp-server
     # Publica a porta SOMENTE no loopback da máquina. Este é um laboratório
     # local: não troque por "8000:8000", que exporia o serviço na rede.
+    # Dentro do contêiner a porta é sempre 8000; MCP_HOST_PORT muda apenas a
+    # porta publicada na sua máquina (use se a 8000 já estiver ocupada). Nesse
+    # caso o endpoint do cliente vira http://localhost:${MCP_HOST_PORT}/mcp.
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${MCP_HOST_PORT:-8000}:8000"
     environment:
       POKEAPI_BASE_URL: ${POKEAPI_BASE_URL:-https://pokeapi.co/api/v2/}
       POKEAPI_TIMEOUT_SECONDS: ${POKEAPI_TIMEOUT_SECONDS:-10}
       POKEAPI_CACHE_TTL_SECONDS: ${POKEAPI_CACHE_TTL_SECONDS:-300}
       POKEAPI_CACHE_MAX_ENTRIES: ${POKEAPI_CACHE_MAX_ENTRIES:-256}
-      MCP_HOST: ${MCP_HOST:-0.0.0.0}
-      MCP_PORT: ${MCP_PORT:-8000}
-      MCP_PATH: ${MCP_PATH:-/mcp}
       MCP_LOG_LEVEL: ${MCP_LOG_LEVEL:-INFO}
-      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-127.0.0.1:8000,localhost:8000,[::1]:8000}
-      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-http://127.0.0.1:8000,http://localhost:8000,http://[::1]:8000}
+      # A allowlist cobre os dois pontos de vista: a porta interna 8000 (usada
+      # pelo healthcheck e pelo contêiner de smoke, que compartilha esta rede)
+      # e a porta publicada na máquina, que é o Host que o cliente MCP envia.
+      # Quando MCP_HOST_PORT=8000 as duas metades coincidem, e repetir um valor
+      # na lista é inofensivo.
+      MCP_ALLOWED_HOSTS: >-
+        127.0.0.1:8000,localhost:8000,[::1]:8000,
+        127.0.0.1:${MCP_HOST_PORT:-8000},localhost:${MCP_HOST_PORT:-8000},[::1]:${MCP_HOST_PORT:-8000}
+      MCP_ALLOWED_ORIGINS: >-
+        http://127.0.0.1:8000,http://localhost:8000,http://[::1]:8000,
+        http://127.0.0.1:${MCP_HOST_PORT:-8000},http://localhost:${MCP_HOST_PORT:-8000},http://[::1]:${MCP_HOST_PORT:-8000}
     healthcheck:
       # Verifica apenas se o processo responde. Não consulta a PokéAPI e não
       # testa o protocolo MCP (para isso, use scripts/smoke_test.py).

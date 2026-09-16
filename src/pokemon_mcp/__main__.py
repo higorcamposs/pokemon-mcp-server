@@ -1,7 +1,13 @@
 """Ponto de entrada: serve o MCP Server por Streamable HTTP.
 
-Configuração por variáveis de ambiente, todas com padrão seguro para uso local.
-Veja `.env.example`.
+O endereço interno do servidor é fixo: `0.0.0.0:8000` com o endpoint em
+`/mcp`. Num laboratório didático, deixar isso configurável só cria chances de
+o healthcheck, o smoke test e a allowlist de Host apontarem para lugares
+diferentes. Para publicar em outra porta da máquina, mude `MCP_HOST_PORT` no
+Compose: quem muda é o mapeamento de portas, não o servidor.
+
+O que continua configurável por variável de ambiente: `MCP_LOG_LEVEL`,
+`MCP_ALLOWED_HOSTS` e `MCP_ALLOWED_ORIGINS`. Veja `.env.example`.
 """
 
 from __future__ import annotations
@@ -15,9 +21,9 @@ from .server import mcp
 
 logger = logging.getLogger("pokemon_mcp")
 
-DEFAULT_HOST = "0.0.0.0"  # noqa: S104 - dentro do contêiner; o compose publica só em 127.0.0.1
-DEFAULT_PORT = 8000
-DEFAULT_PATH = "/mcp"
+HOST = "0.0.0.0"  # noqa: S104 - dentro do contêiner; o compose publica só em 127.0.0.1
+PORT = 8000
+PATH = "/mcp"
 DEFAULT_ALLOWED_HOSTS = "127.0.0.1:8000,localhost:8000,[::1]:8000"
 DEFAULT_ALLOWED_ORIGINS = (
     "http://127.0.0.1:8000,http://localhost:8000,http://[::1]:8000"
@@ -46,22 +52,19 @@ def build_transport_security() -> TransportSecuritySettings:
 
 
 def main() -> None:
-    host = os.getenv("MCP_HOST", DEFAULT_HOST)
-    port = int(os.getenv("MCP_PORT", str(DEFAULT_PORT)))
-    path = os.getenv("MCP_PATH", DEFAULT_PATH)
     security = build_transport_security()
 
     logger.info(
-        "Pokémon MCP Server em http://%s:%s%s (Streamable HTTP)", host, port, path
+        "Pokémon MCP Server em http://%s:%s%s (Streamable HTTP)", HOST, PORT, PATH
     )
     logger.info("Host allowlist: %s", ", ".join(security.allowed_hosts))
     logger.info("Origin allowlist: %s", ", ".join(security.allowed_origins))
 
     mcp.run(
         transport="streamable-http",
-        host=host,
-        port=port,
-        streamable_http_path=path,
+        host=HOST,
+        port=PORT,
+        streamable_http_path=PATH,
         transport_security=security,
     )
 

@@ -11,6 +11,7 @@ import logging
 import re
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from typing import Any, Final
 
 import httpx2
@@ -28,6 +29,15 @@ MAX_IDENTIFIER_LENGTH: Final = 60
 
 _IDENTIFIER_PATTERN: Final = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 """Nome canônico da PokéAPI: minúsculas, dígitos e hífens entre segmentos."""
+
+_NUMERIC_PATTERN: Final = re.compile(r"^[0-9]+$")
+"""Somente dígitos ASCII.
+
+`str.isdigit()` não serve aqui: ele aceita dígitos Unicode como '²' (que faz
+`int()` levantar ValueError) e '٢' (que `int()` converteria silenciosamente
+para 2). A URL da PokéAPI só aceita dígitos ASCII, então a validação usa
+exatamente esse conjunto.
+"""
 
 
 class PokeAPIError(Exception):
@@ -58,8 +68,10 @@ def normalize_identifier(raw: str) -> str:
     """Normaliza e valida `name_or_id` antes de montar a URL.
 
     Aceita nomes canônicos (`pikachu`, `mr-mime`) e identificadores numéricos
-    positivos (`25`). Rejeita entradas vazias, longas demais, caminhos e URLs,
-    de forma que o argumento nunca possa apontar para fora da base configurada.
+    positivos em dígitos ASCII (`25`, e `025` vira `25`). Rejeita entradas
+    vazias, longas demais, caminhos, URLs, espaços internos, acentos e dígitos
+    Unicode fora do ASCII, de forma que o argumento nunca possa apontar para
+    fora da base configurada.
     """
     if not isinstance(raw, str):
         raise InvalidIdentifierError("O identificador precisa ser um texto.")
@@ -74,7 +86,7 @@ def normalize_identifier(raw: str) -> str:
             f"O identificador excede {MAX_IDENTIFIER_LENGTH} caracteres."
         )
 
-    if value.isdigit():
+    if _NUMERIC_PATTERN.match(value):
         number = int(value)
         if number <= 0:
             raise InvalidIdentifierError("O identificador numérico deve ser positivo.")
@@ -97,9 +109,18 @@ class TTLCache:
     aceitável: ele só evita repetir a mesma consulta à PokéAPI.
     """
 
-    def __init__(self, ttl_seconds: float, max_entries: int) -> None:
+    def __init__(
+        self,
+        ttl_seconds: float,
+        max_entries: int,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._ttl = ttl_seconds
         self._max_entries = max_entries
+        # `clock` existe para que os testes possam avançar o tempo sem sleep().
+        # O padrão é o relógio monotônico, imune a ajustes do relógio do sistema.
+        self._clock = clock
         self._entries: OrderedDict[str, tuple[float, Any]] = OrderedDict()
 
     def get(self, key: str) -> Any | None:
@@ -108,7 +129,7 @@ class TTLCache:
             return None
 
         expires_at, value = entry
-        if time.monotonic() >= expires_at:
+        if self._clock() >= expires_at:
             del self._entries[key]
             return None
 
@@ -119,11 +140,15 @@ class TTLCache:
         if self._max_entries <= 0 or self._ttl <= 0:
             return
 
-        self._entries[key] = (time.monotonic() + self._ttl, value)
+        self._entries[key] = (self._clock() + self._ttl, value)
         self._entries.move_to_end(key)
 
         while len(self._entries) > self._max_entries:
             self._entries.popitem(last=False)
+
+    def delete(self, key: str) -> None:
+        """Remove a entrada, se existir. Chamar para uma chave ausente é inócuo."""
+        self._entries.pop(key, None)
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -162,6 +187,25 @@ class PokeAPIClient:
         """URL pública do recurso, devolvida às Tools como `source_url`."""
         return f"{self.base_url}{resource}/{identifier}/"
 
+    @staticmethod
+    def cache_key(resource: str, identifier: str) -> str:
+        """Chave de cache do recurso já com o identificador normalizado."""
+        return f"{resource}/{identifier}"
+
+    def invalidate(self, resource: str, name_or_id: str) -> None:
+        """Esquece a resposta guardada para este recurso.
+
+        Chamado quando a validação específica do recurso (`models.build_*`)
+        rejeita o JSON: uma resposta malformada não pode ficar presa no cache
+        até o fim do TTL e continuar sendo servida às próximas chamadas.
+        """
+        try:
+            identifier = normalize_identifier(name_or_id)
+        except InvalidIdentifierError:
+            # Um identificador inválido nunca chegou a virar entrada de cache.
+            return
+        self._cache.delete(self.cache_key(resource, identifier))
+
     async def fetch(self, resource: str, name_or_id: str) -> tuple[dict[str, Any], str]:
         """Busca `resource/{name_or_id}` e devolve `(json, source_url)`.
 
@@ -169,7 +213,7 @@ class PokeAPIClient:
         """
         identifier = normalize_identifier(name_or_id)
         url = self.build_url(resource, identifier)
-        cache_key = f"{resource}/{identifier}"
+        cache_key = self.cache_key(resource, identifier)
 
         cached = self._cache.get(cache_key)
         if cached is not None:

@@ -95,6 +95,31 @@ async def test_get_pokemon_normalizes_the_argument(
     assert handler.requests == ["pokemon/pikachu"]
 
 
+async def test_get_pokemon_accepts_a_numeric_id(
+    client: Client, handler: RecordingHandler
+) -> None:
+    """Consultar por número devolve a ficha, não só outra chave de cache."""
+    result = await client.call_tool("get_pokemon", {"name_or_id": "25"})
+
+    assert result.is_error is False
+    data = result.structured_content
+    assert data is not None
+    assert data["id"] == 25
+    assert data["name"] == "pikachu"
+    assert data["types"] == ["electric"]
+    assert data["source_url"] == "https://pokeapi.test/api/v2/pokemon/25/"
+    assert handler.requests == ["pokemon/25"]
+
+
+async def test_get_pokemon_normalizes_leading_zeros(
+    client: Client, handler: RecordingHandler
+) -> None:
+    result = await client.call_tool("get_pokemon", {"name_or_id": "025"})
+
+    assert result.is_error is False
+    assert handler.requests == ["pokemon/25"]
+
+
 async def test_get_pokemon_reports_unknown_pokemon(client: Client) -> None:
     result = await client.call_tool("get_pokemon", {"name_or_id": "pikachuu"})
 
@@ -169,6 +194,50 @@ async def test_repeated_calls_hit_the_cache(
 
     # "25" é outra chave de cache; "pikachu" repetido não vai à rede de novo.
     assert handler.requests == ["pokemon/pikachu", "pokemon/25"]
+
+
+async def test_malformed_response_is_not_kept_in_the_cache(
+    client: Client, handler: RecordingHandler
+) -> None:
+    """Uma resposta quebrada não pode envenenar o cache pelo TTL inteiro.
+
+    1. a PokéAPI devolve um JSON fora do contrato -> a Tool falha;
+    2. a mesma URL passa a devolver a resposta correta;
+    3. a Tool consulta de novo e funciona, ou seja, o payload ruim saiu do cache.
+    """
+    good = handler.responses["pokemon/pikachu"]
+    broken = {key: value for key, value in good.items() if key != "stats"}
+    handler.responses["pokemon/pikachu"] = broken
+
+    failed = await client.call_tool("get_pokemon", {"name_or_id": "pikachu"})
+    assert failed.is_error is True
+    assert failed.structured_content is None
+    assert "Resposta inesperada da PokéAPI" in text_of(failed)
+    assert handler.requests == ["pokemon/pikachu"]
+
+    handler.responses["pokemon/pikachu"] = good
+
+    recovered = await client.call_tool("get_pokemon", {"name_or_id": "pikachu"})
+    assert recovered.is_error is False
+    assert recovered.structured_content is not None
+    assert recovered.structured_content["id"] == 25
+    # Duas idas à rede: a segunda chamada não reaproveitou o payload malformado.
+    assert handler.requests == ["pokemon/pikachu", "pokemon/pikachu"]
+
+
+async def test_valid_response_is_still_cached_after_a_failure(
+    client: Client, handler: RecordingHandler
+) -> None:
+    """A invalidação atinge só a entrada quebrada; o cache continua útil."""
+    handler.responses["type/electric"] = {"id": 13, "name": "electric"}
+
+    failed = await client.call_tool("get_type", {"name_or_id": "electric"})
+    assert failed.is_error is True
+
+    await client.call_tool("get_pokemon", {"name_or_id": "pikachu"})
+    await client.call_tool("get_pokemon", {"name_or_id": "pikachu"})
+
+    assert handler.requests == ["type/electric", "pokemon/pikachu"]
 
 
 # --- Resource -------------------------------------------------------------

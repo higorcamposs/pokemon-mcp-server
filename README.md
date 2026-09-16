@@ -212,9 +212,11 @@ pokemon-mcp-server/
 │   ├── conectar-cliente.md
 │   ├── roteiro-prints.md
 │   └── versoes-e-referencias.md
+├── .github/workflows/  # CI: instala o projeto e roda os testes
 ├── Dockerfile          # runtime (não root) e dev (testes)
 ├── compose.yaml
 ├── pyproject.toml / uv.lock
+├── LICENSE
 └── .env.example
 ```
 
@@ -229,18 +231,31 @@ como `.env`. As principais:
 | `POKEAPI_TIMEOUT_SECONDS` | `10` | Tempo limite de cada consulta. |
 | `POKEAPI_CACHE_TTL_SECONDS` | `300` | Validade de cada entrada no cache em memória. |
 | `POKEAPI_CACHE_MAX_ENTRIES` | `256` | Tamanho máximo do cache (descarte LRU). |
-| `MCP_PATH` | `/mcp` | Caminho do endpoint MCP. |
+| `MCP_HOST_PORT` | `8000` | Porta publicada na sua máquina, sempre em `127.0.0.1`. |
 | `MCP_LOG_LEVEL` | `INFO` | Nível de log. |
-| `MCP_ALLOWED_HOSTS` | `127.0.0.1:8000,localhost:8000,[::1]:8000` | Allowlist do cabeçalho `Host` (proteção contra DNS rebinding). |
-| `MCP_ALLOWED_ORIGINS` | `http://127.0.0.1:8000,...` | Allowlist do cabeçalho `Origin`. |
+| `MCP_ALLOWED_HOSTS` | derivada de `MCP_HOST_PORT` | Allowlist do cabeçalho `Host` (proteção contra DNS rebinding). |
+| `MCP_ALLOWED_ORIGINS` | derivada de `MCP_HOST_PORT` | Allowlist do cabeçalho `Origin`. |
+
+**Dentro do contêiner, o endereço é fixo:** `0.0.0.0:8000` e endpoint `/mcp`.
+Não existe variável para mudar isso, e é de propósito: o healthcheck, o smoke
+test e a allowlist de `Host` dependem desse valor, e deixá-los livres só cria
+combinações que não funcionam. O que dá para mudar é a porta publicada na sua
+máquina, com `MCP_HOST_PORT` (use se a 8000 já estiver ocupada). Ao mudar:
+
+- o endpoint do cliente passa a ser `http://localhost:<MCP_HOST_PORT>/mcp`;
+- o Compose já acrescenta essa porta às allowlists de `Host` e `Origin`;
+- um smoke test rodado **fora** do Docker precisa da nova URL;
+- o smoke test rodado pelo Compose continua usando `http://localhost:8000/mcp`,
+  porque o contêiner de smoke compartilha a rede do servidor.
 
 ## Limites do laboratório
 
 - **Três Tools, um Resource e um Prompt.** Movimentos, evoluções, espécies e o
   resto da PokéAPI ficam de fora de propósito.
 - **Não há simulador de batalha.** As relações de tipo descrevem um tipo
-  isolado; elas não dizem quem vence um confronto, que também depende do
-  segundo tipo, habilidades, nível, movimentos, itens e condições de campo.
+  isolado; elas não dizem quem vence um confronto. Um Pokémon tem um ou dois
+  tipos, e o resultado real ainda depende de habilidades, nível, movimentos,
+  itens e condições de campo.
 - **Habilidades são possibilidades da espécie.** Um Pokémon individual tem
   apenas uma ativa por vez, e `is_hidden` marca a habilidade oculta.
 - **Descrições de habilidade vêm em inglês**, como estão na PokéAPI. O servidor
@@ -259,7 +274,7 @@ como `.env`. As principais:
 | `docker compose ps` mostra `unhealthy` | O processo não subiu. | `docker compose logs pokemon-mcp-server` e leia o traceback. |
 | O cliente não conecta e o log do servidor mostra `Invalid Host header` (HTTP 421) | O `Host` usado não está em `MCP_ALLOWED_HOSTS`. | Conecte por `http://localhost:8000/mcp` ou `http://127.0.0.1:8000/mcp`. Se precisar de outro nome, acrescente-o à allowlist — **não** desligue a proteção. |
 | HTTP 403 com `Invalid Origin header` | Cliente de navegador com `Origin` fora da lista. | Acrescente a origem exata a `MCP_ALLOWED_ORIGINS`. |
-| Porta 8000 ocupada | Outro serviço local. | Mude o mapeamento em `compose.yaml` (ex.: `127.0.0.1:8001:8000`) e ajuste `MCP_ALLOWED_HOSTS` para a porta publicada. |
+| Porta 8000 ocupada | Outro serviço local. | Defina `MCP_HOST_PORT=8001` (no `.env` ou no ambiente) e suba de novo. As allowlists acompanham; o endpoint vira `http://localhost:8001/mcp`. |
 | Tool responde "A PokéAPI está indisponível" | Sem internet no contêiner ou PokéAPI fora do ar. | Teste `curl https://pokeapi.co/api/v2/pokemon/pikachu/` na máquina. |
 | Tool responde "Argumento inválido" | Entrada com espaço interno, URL, caminho ou acento. | Use nome canônico (`mr-mime`) ou número positivo. |
 | Uma aplicação de IA hospedada na nuvem não enxerga o servidor | `localhost` dela não é a sua máquina. | Veja a explicação em [docs/conectar-cliente.md](docs/conectar-cliente.md). |
@@ -270,8 +285,10 @@ As versões fixadas e a documentação oficial consultada estão em
 **[docs/versoes-e-referencias.md](docs/versoes-e-referencias.md)**.
 
 Em resumo: Python 3.12, SDK oficial `mcp` 2.2.0 (linha 2.x, classe
-`MCPServer`), `httpx2` 2.13.0, `pydantic` 2.13.5, dependências fixadas em
-`uv.lock`.
+`MCPServer`), `httpx2` 2.13.0 e `pydantic` 2.13.5. As dependências Python estão
+fixadas no `uv.lock` (versão e hash); as imagens base do Docker usam tags de
+linha (`python:3.12-slim-bookworm`), que continuam em 3.12 mas recebem
+atualizações — elas não estão fixadas por digest.
 
 ## Material da apresentação
 

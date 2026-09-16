@@ -68,13 +68,15 @@ o modelo e transforma o valor de retorno em conteúdo estruturado. As anotaçõe
 
 - no `Dockerfile`: a instalação com `uv sync --locked`, o `USER pokemon`
   (usuário não root) e o `CMD ["python", "-m", "pokemon_mcp"]`;
-- no `compose.yaml`: o mapeamento `"127.0.0.1:8000:8000"` e o bloco
-  `healthcheck`.
+- no `compose.yaml`: o mapeamento
+  `"127.0.0.1:${MCP_HOST_PORT:-8000}:8000"` (publicação só no loopback) e o
+  bloco `healthcheck`.
 
 **Conceito demonstrado:** empacotar o servidor em contêiner é o que torna o
-laboratório reproduzível: não é preciso ter Python na máquina, as dependências
-estão fixadas no `uv.lock`, o processo roda sem privilégios e a porta fica
-publicada apenas no loopback.
+laboratório fácil de repetir: não é preciso ter Python na máquina, as
+dependências Python estão fixadas no `uv.lock`, o processo roda sem privilégios
+e a porta fica publicada apenas no loopback. (A imagem base usa tag de linha,
+não digest — veja `docs/versoes-e-referencias.md`.)
 
 ---
 

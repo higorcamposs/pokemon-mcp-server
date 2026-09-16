@@ -115,7 +115,20 @@ async def run(url: str) -> None:
             check("source_url presente", "pokeapi.co" in str(data.get("source_url")))
             print(f"         source_url: {data.get('source_url')}")
 
-        print("\n4. get_ability('static')")
+        print("\n4. get_pokemon('25') — mesmo Pokémon pelo identificador numérico")
+        data = structured(
+            await client.call_tool("get_pokemon", {"name_or_id": "25"}),
+            "get_pokemon por id respondeu",
+        )
+        if data:
+            check("nome é pikachu", data.get("name") == "pikachu")
+            check(
+                "a URL consultada usa o número",
+                str(data.get("source_url", "")).rstrip("/").endswith("/pokemon/25"),
+                str(data.get("source_url")),
+            )
+
+        print("\n5. get_ability('static')")
         data = structured(
             await client.call_tool("get_ability", {"name_or_id": "static"}),
             "get_ability respondeu",
@@ -129,7 +142,7 @@ async def run(url: str) -> None:
             )
             check("source_url presente", "pokeapi.co" in str(data.get("source_url")))
 
-        print("\n5. get_type('electric')")
+        print("\n6. get_type('electric')")
         data = structured(
             await client.call_tool("get_type", {"name_or_id": "electric"}),
             "get_type respondeu",
@@ -155,12 +168,12 @@ async def run(url: str) -> None:
             )
             check("source_url presente", "pokeapi.co" in str(data.get("source_url")))
 
-        print("\n6. Erro tratado: get_pokemon com nome inexistente")
+        print("\n7. Erro tratado: get_pokemon com nome inexistente")
         result = await client.call_tool("get_pokemon", {"name_or_id": "pikachuu"})
         check("a falha veio marcada como erro", result.is_error is True)
         check("sem dados estruturados na falha", result.structured_content is None)
 
-        print(f"\n7. Resource {GUIDE_URI}")
+        print(f"\n8. Resource {GUIDE_URI}")
         resources = await client.list_resources()
         uris = [str(resource.uri) for resource in resources.resources]
         check(f"{GUIDE_URI} está na listagem", GUIDE_URI in uris, f"listados: {uris}")
@@ -179,7 +192,7 @@ async def run(url: str) -> None:
             )
             print(f"         {len(contents.text)} caracteres em Markdown")
 
-        print("\n8. Prompt compare_pokemon")
+        print("\n9. Prompt compare_pokemon")
         prompts = await client.list_prompts()
         names = [prompt.name for prompt in prompts.prompts]
         check("compare_pokemon está na listagem", "compare_pokemon" in names)
@@ -220,8 +233,10 @@ def main() -> int:
             print(f"  - {failure}")
         return 1
 
-    print("SMOKE TEST OK: capacidades descobertas e executadas pelo protocolo MCP,")
-    print("com dados reais da PokéAPI.")
+    print("SMOKE TEST OK: os cenários acima funcionaram neste ambiente, pelo")
+    print("protocolo MCP e com dados reais da PokéAPI. Isso não garante que")
+    print("qualquer outro cliente vá conectar: transporte, versão e configuração")
+    print("da integração ainda podem diferir.")
     return 0
 
 
