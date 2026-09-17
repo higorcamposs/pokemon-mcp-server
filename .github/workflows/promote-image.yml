@@ -1,0 +1,213 @@
+# Promove para o Docker Hub uma versão JÁ PUBLICADA no GHCR, sem reconstruir.
+#
+# Por que existe, se o `publish image` já manda para os dois registries:
+#
+#   1. versões lançadas antes do Docker Hub entrar no fluxo (a 0.1.2, por
+#      exemplo) precisam chegar lá sem passar por um build novo;
+#   2. se uma publicação falhar só na metade do Docker Hub, reconstruir não é
+#      opção — a tag de versão do GHCR já existe e não se regrava. Promover o
+#      índice que ficou lá é o caminho correto de recuperação.
+#
+# O que ele NÃO faz: construir. `docker buildx imagetools create` copia o
+# índice multiarch e os blobs de um registry para o outro. Os bytes publicados
+# no Docker Hub são os mesmos que já estão no GHCR — mesmo digest, mesmas
+# camadas, mesmos labels e anotações OCI. Um rebuild a partir do código atual
+# poderia produzir bytes diferentes; por isso ele não acontece aqui.
+name: promote image
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versão já publicada no GHCR (sem o 'v'). Ex.: 0.1.2"
+        required: true
+        type: string
+      update_latest:
+        description: "Também apontar :latest do Docker Hub para esta versão (só para a estável mais recente)"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  DOCKERHUB_REGISTRY: docker.io
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: promover GHCR → Docker Hub
+    runs-on: ubuntu-latest
+    if: github.repository == 'higorcamposs/pokemon-mcp-server'
+    permissions:
+      contents: read
+      # Leitura, não escrita: nada é publicado no GHCR por este fluxo.
+      packages: read
+    steps:
+      - name: Conferir a entrada e as credenciais do Docker Hub
+        id: setup
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          # Só a PRESENÇA do secret é testada. O valor nunca é impresso.
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          # Texto livre digitado por quem dispara o workflow entra por variável
+          # de ambiente, nunca interpolado direto no shell.
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${INPUT_VERSION}"
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$version' não tem o formato X.Y.Z[-sufixo]. Informe a versão sem o 'v'."
+            exit 1
+          fi
+
+          if [ -z "${DOCKERHUB_USERNAME:-}" ] || [ -z "${DOCKERHUB_TOKEN:-}" ]; then
+            echo "::error::Falta configurar, em Settings → Secrets and variables → Actions: a variable DOCKERHUB_USERNAME e o secret DOCKERHUB_TOKEN."
+            exit 1
+          fi
+
+          # Prerelease nunca move `latest`: ele aponta para a estável mais nova.
+          prerelease=false
+          [[ "$version" == *-* ]] && prerelease=true
+          if [ "$prerelease" = "true" ] && [ "${{ inputs.update_latest }}" = "true" ]; then
+            echo "::error::'$version' é prerelease. A tag latest só aponta para versão estável."
+            exit 1
+          fi
+
+          {
+            echo "version=$version"
+            echo "target=${{ env.DOCKERHUB_REGISTRY }}/${DOCKERHUB_USERNAME}/${{ github.event.repository.name }}"
+            echo "source=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Login no GHCR (leitura da imagem de origem)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login no Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.DOCKERHUB_REGISTRY }}
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Configurar Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Conferir a imagem de origem no GHCR
+        id: source
+        # A origem precisa existir e trazer as duas arquiteturas ANTES de
+        # qualquer escrita no Docker Hub.
+        run: |
+          set -euo pipefail
+          ref="${{ steps.setup.outputs.source }}:${{ steps.setup.outputs.version }}"
+
+          if ! docker buildx imagetools inspect "$ref" > /dev/null 2>&1; then
+            echo "::error::$ref não existe no GHCR. Só é possível promover uma versão já publicada."
+            exit 1
+          fi
+
+          platforms="$(docker buildx imagetools inspect "$ref" \
+            --format '{{range .Manifest.Manifests}}{{if .Platform.OS}}{{.Platform.OS}}/{{.Platform.Architecture}} {{end}}{{end}}')"
+          digest="$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')"
+          echo "origem: $ref"
+          echo "arquiteturas: $platforms"
+          echo "digest do índice: $digest"
+
+          for want in linux/amd64 linux/arm64; do
+            case "$platforms" in
+              *"$want"*) ;;
+              *) echo "::error::A origem não traz $want. Promoção cancelada."; exit 1 ;;
+            esac
+          done
+
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Recusar regravar uma tag de versão já existente no Docker Hub
+        # Mesma regra do fluxo de release: versão é contrato. A exceção é a
+        # promoção repetida do MESMO digest, que não muda nada para ninguém.
+        run: |
+          set -euo pipefail
+          ref="${{ steps.setup.outputs.target }}:${{ steps.setup.outputs.version }}"
+
+          if docker buildx imagetools inspect "$ref" > /dev/null 2>&1; then
+            found="$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')"
+            if [ "$found" = "${{ steps.source.outputs.digest }}" ]; then
+              echo "$ref já aponta para ${{ steps.source.outputs.digest }}: nada a regravar."
+            else
+              echo "::error::$ref já existe apontando para $found, diferente da origem (${{ steps.source.outputs.digest }}). Uma versão publicada não é regravada."
+              exit 1
+            fi
+          else
+            echo "$ref ainda não existe: seguro promover."
+          fi
+
+      - name: Copiar o índice multiarch para o Docker Hub
+        # A origem é o DIGEST, não a tag: o que é copiado é exatamente o índice
+        # conferido no passo anterior, mesmo que alguém mexa na tag no meio.
+        run: |
+          set -euo pipefail
+          tags=(--tag "${{ steps.setup.outputs.target }}:${{ steps.setup.outputs.version }}")
+          if [ "${{ inputs.update_latest }}" = "true" ]; then
+            tags+=(--tag "${{ steps.setup.outputs.target }}:latest")
+          fi
+
+          docker buildx imagetools create "${tags[@]}" \
+            "${{ steps.setup.outputs.source }}@${{ steps.source.outputs.digest }}"
+
+      - name: Conferir o que ficou no Docker Hub
+        run: |
+          set -euo pipefail
+          refs=("${{ steps.setup.outputs.target }}:${{ steps.setup.outputs.version }}")
+          if [ "${{ inputs.update_latest }}" = "true" ]; then
+            refs+=("${{ steps.setup.outputs.target }}:latest")
+          fi
+
+          for ref in "${refs[@]}"; do
+            echo "::group::$ref"
+            platforms="$(docker buildx imagetools inspect "$ref" \
+              --format '{{range .Manifest.Manifests}}{{if .Platform.OS}}{{.Platform.OS}}/{{.Platform.Architecture}} {{end}}{{end}}')"
+            digest="$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')"
+            echo "arquiteturas: $platforms"
+            echo "digest: $digest"
+            echo "::endgroup::"
+
+            for want in linux/amd64 linux/arm64; do
+              case "$platforms" in
+                *"$want"*) ;;
+                *) echo "::error::$ref não traz $want."; exit 1 ;;
+              esac
+            done
+
+            if [ "$digest" != "${{ steps.source.outputs.digest }}" ]; then
+              echo "::error::$ref ficou com $digest, diferente da origem no GHCR (${{ steps.source.outputs.digest }})."
+              exit 1
+            fi
+          done
+
+      - name: Registrar o resultado no resumo da execução
+        run: |
+          {
+            echo "## Versão promovida para o Docker Hub"
+            echo
+            echo "| Item | Valor |"
+            echo "| --- | --- |"
+            echo "| Versão | \`${{ steps.setup.outputs.version }}\` |"
+            echo "| Origem | \`${{ steps.setup.outputs.source }}:${{ steps.setup.outputs.version }}\` |"
+            echo "| Destino | \`${{ steps.setup.outputs.target }}:${{ steps.setup.outputs.version }}\` |"
+            echo "| \`latest\` atualizado | \`${{ inputs.update_latest }}\` |"
+            echo "| Digest do índice (idêntico nos dois) | \`${{ steps.source.outputs.digest }}\` |"
+            echo "| Arquiteturas | \`linux/amd64\`, \`linux/arm64\` |"
+            echo
+            echo "Cópia de índice OCI, sem rebuild: os bytes são os mesmos do GHCR."
+            echo
+            echo '```bash'
+            echo "docker pull ${{ steps.setup.outputs.target }}:${{ steps.setup.outputs.version }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

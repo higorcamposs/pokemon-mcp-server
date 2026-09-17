@@ -36,8 +36,20 @@ Streamable HTTP pode se conectar ao mesmo endpoint.
 ```bash
 docker run -d --name pokemon-mcp-server \
   -p 127.0.0.1:8000:8000 \
-  ghcr.io/higorcamposs/pokemon-mcp-server:0.1.2
+  higorcamposs/pokemon-mcp-server:0.1.2
 ```
+
+A imagem é distribuída em dois registries. Use o que preferir:
+
+```bash
+docker pull higorcamposs/pokemon-mcp-server:0.1.2          # Docker Hub
+docker pull ghcr.io/higorcamposs/pokemon-mcp-server:0.1.2  # GHCR
+```
+
+São a mesma imagem, não duas: o mesmo build multiarch (`linux/amd64` e
+`linux/arm64`), publicado nos dois lugares com o mesmo digest. Prefira a tag de
+versão a `latest` quando reprodutibilidade importar — uma versão publicada
+nunca é regravada, enquanto `latest` anda a cada release estável.
 
 O mapeamento começa com `127.0.0.1` de propósito: o servidor fica disponível
 somente na sua máquina. Ele não tem autenticação e não deve ser exposto à rede
@@ -149,9 +161,9 @@ PokéAPI → resposta bruta → MCP Server → resposta estruturada → cliente 
 ```
 
 O protocolo MCP fica entre o cliente e este servidor. Entre o servidor e a
-PokéAPI continua existindo HTTP/REST comum. Publicar a imagem no GHCR distribui
-o programa, mas não cria um endpoint público: o contêiner roda na máquina de
-quem o iniciou.
+PokéAPI continua existindo HTTP/REST comum. Publicar a imagem num registry
+distribui o programa, mas não cria um endpoint público: o contêiner roda na
+máquina de quem o iniciou.
 
 O fluxo completo, incluindo os arquivos envolvidos em cada etapa, está em
 [docs/como-funciona.md](docs/como-funciona.md).
@@ -292,7 +304,7 @@ separar um problema do servidor de um problema específico do cliente. Veja o
 
 ### Para manter e publicar
 
-- [Publicar uma nova imagem no GHCR](docs/publicar-imagem.md)
+- [Publicar uma nova imagem (GHCR e Docker Hub)](docs/publicar-imagem.md)
 - `compose.ghcr.yaml`: executar a imagem publicada sem clonar o repositório
 - `.env.example`: referência completa das variáveis de ambiente
 

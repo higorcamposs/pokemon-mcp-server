@@ -1,12 +1,40 @@
-# Publicar a imagem no GHCR
+# Publicar a imagem (GHCR e Docker Hub)
 
-Procedimento de manutenção para lançar uma versão nova da imagem em
-`ghcr.io/higorcamposs/pokemon-mcp-server`.
+Procedimento de manutenção para lançar uma versão nova da imagem nos dois
+registries em que ela é distribuída:
+
+| Registry | Nome da imagem |
+| --- | --- |
+| GHCR | `ghcr.io/higorcamposs/pokemon-mcp-server` |
+| Docker Hub | `higorcamposs/pokemon-mcp-server` (= `docker.io/higorcamposs/pokemon-mcp-server`) |
+
+**São duas distribuições de uma imagem só**, não duas imagens. O Buildx
+constrói **um** índice multiarch e o mesmo push o envia para os dois destinos,
+com o mesmo digest, as mesmas camadas e os mesmos metadados OCI.
 
 O fluxo é automatizado por
 [`.github/workflows/publish-image.yml`](../.github/workflows/publish-image.yml),
 disparado por **release publicada**. Não existe publicação manual a partir da
-máquina de ninguém: é o Actions que constrói e envia, com o `GITHUB_TOKEN`.
+máquina de ninguém: é o Actions que constrói e envia.
+
+## Credenciais
+
+| Registry | Credencial | Onde fica |
+| --- | --- | --- |
+| GHCR | `GITHUB_TOKEN` do próprio Actions | automático; `packages: write` só no job que publica |
+| Docker Hub | variable `DOCKERHUB_USERNAME` + secret `DOCKERHUB_TOKEN` | **Settings → Secrets and variables → Actions** |
+
+O `DOCKERHUB_TOKEN` é um *Personal Access Token* do Docker Hub com permissão de
+leitura **e** escrita. Ele vive apenas no cofre de secrets do repositório: não
+aparece no código, no README, em arquivo local nem nos logs — o workflow testa
+só a **presença** dele, nunca imprime o valor, e o Actions mascara secrets na
+saída.
+
+Se a variable ou o secret faltarem, a release **ainda sai no GHCR** e o job
+emite um `::warning::` dizendo que o Docker Hub ficou de fora. O GHCR nunca
+depende do Docker Hub para funcionar. Para levar essa versão ao Docker Hub
+depois, use a [promoção](#promover-uma-versão-já-publicada-para-o-docker-hub) —
+sem reconstruir.
 
 ## O que o workflow faz, em ordem
 
@@ -18,9 +46,11 @@ máquina de ninguém: é o Actions que constrói e envia, com o `GITHUB_TOKEN`.
 | `docker build --target runtime` | `validate` | a imagem de execução constrói |
 | Subir o contêiner e checar `/health` e o usuário | `validate` | ela inicia, fica `healthy` e roda sem ser root |
 | `needs: validate` | `publish` | nada é publicado antes de tudo acima passar |
-| Recusa de tag já existente | `publish` | uma versão publicada nunca é regravada |
-| Build multiarch e push | `publish` | `linux/amd64` + `linux/arm64`, estágio `runtime` |
-| Resumo da execução | `publish` | tags, revisão, arquiteturas e digest ficam registrados |
+| Login no GHCR e no Docker Hub | `publish` | os dois destinos autenticados antes de qualquer escrita |
+| Recusa de tag já existente | `publish` | uma versão publicada nunca é regravada — conferido em **cada** registry |
+| Build multiarch e push | `publish` | **um** build, `linux/amd64` + `linux/arm64`, estágio `runtime`, enviado aos dois registries |
+| Leitura de volta do que foi publicado | `publish` | cada registry serve as duas arquiteturas e o **mesmo digest** do índice construído |
+| Resumo da execução | `publish` | tags, revisão, arquiteturas, registries e digest ficam registrados |
 
 A CI verde de um commit anterior **não** vale como aprovação: a validação roda
 no mesmo fluxo, sobre o commit que será publicado.
@@ -93,10 +123,10 @@ Na aba **Actions**, abra a execução de `publish image`. Ao final, o resumo tra
 as tags, a revisão, as arquiteturas e o **digest do índice multiarch** —
 guarde o digest, é ele que identifica os bytes exatos.
 
-### 6. Conferir a visibilidade do pacote
+### 6. Conferir a visibilidade nos dois registries
 
-**Repositório público não implica pacote público.** Um pacote recém-criado
-nasce **privado**.
+**Repositório público não implica pacote público.** No GHCR, um pacote
+recém-criado nasce **privado**.
 
 Na primeira publicação, torne-o público pela interface (não existe API oficial
 para isso):
@@ -112,6 +142,15 @@ workflow publicar nas próximas versões.
 
 Depois da primeira vez, as publicações seguintes herdam a visibilidade.
 
+No Docker Hub, o repositório é criado pelo primeiro push e herda a privacidade
+padrão da conta. Confira em <https://hub.docker.com/r/higorcamposs/pokemon-mcp-server>
+→ **Settings**, ou pela API pública, que só responde para repositório público:
+
+```bash
+curl -s https://hub.docker.com/v2/repositories/higorcamposs/pokemon-mcp-server/ \
+  | python3 -c 'import sys,json; print("privado:", json.load(sys.stdin)["is_private"])'
+```
+
 ### 7. Provar que o download anônimo funciona
 
 Não basta o pacote *parecer* público. Teste **sem credenciais**, usando um
@@ -120,17 +159,32 @@ diretório de configuração temporário do Docker — assim o seu login pessoal
 
 ```bash
 TMPCFG="$(mktemp -d)"
-docker --config "$TMPCFG" pull ghcr.io/higorcamposs/pokemon-mcp-server:0.1.2
-docker --config "$TMPCFG" manifest inspect ghcr.io/higorcamposs/pokemon-mcp-server:0.1.2 \
-  | grep -E '"architecture"|"os"'
+for ref in ghcr.io/higorcamposs/pokemon-mcp-server:0.1.2 \
+           higorcamposs/pokemon-mcp-server:0.1.2; do
+  docker --config "$TMPCFG" manifest inspect "$ref" | grep -E '"architecture"|"os"'
+done
 rm -rf "$TMPCFG"
 ```
 
 Nunca use `docker logout` global só para este teste.
 
+> Num Docker Desktop, um `pull` com `--config` temporário pode não achar o
+> daemon, porque o contexto também mora na configuração. Se acontecer, aponte o
+> socket na mão: `DOCKER_HOST="unix://$HOME/.docker/run/docker.sock"`.
+
 ### 8. Validar o artefato realmente publicado
 
-Valide a imagem **baixada do GHCR**, não a que ficou no cache do build local.
+Valide a imagem **baixada do registry**, não a que ficou no cache do build
+local. O digest é o mesmo nos dois, então validar um dos dois e conferir a
+igualdade dos digests basta:
+
+```bash
+docker buildx imagetools inspect ghcr.io/higorcamposs/pokemon-mcp-server:0.1.2 \
+  --format '{{.Manifest.Digest}}'
+docker buildx imagetools inspect higorcamposs/pokemon-mcp-server:0.1.2 \
+  --format '{{.Manifest.Digest}}'
+```
+
 Use nome de contêiner e porta que não colidam com o laboratório em execução, e
 passe os extras de allowlist correspondentes à porta escolhida:
 
@@ -178,14 +232,58 @@ uma arquitetura como testada só porque ela aparece no manifesto.
 Se precisar corrigir a documentação depois da publicação, **não** regrave a
 tag. Use as notas da release ou um commit novo de documentação.
 
+## Promover uma versão já publicada para o Docker Hub
+
+Workflow: [`.github/workflows/promote-image.yml`](../.github/workflows/promote-image.yml)
+(nome `promote image`), disparado à mão em **Actions → promote image → Run
+workflow**, informando a versão (sem o `v`) e se o `latest` deve acompanhar.
+
+Ele **não constrói nada**. `docker buildx imagetools create` copia o índice
+multiarch e os blobs do GHCR para o Docker Hub: mesmo digest, mesmas camadas,
+mesmos labels e anotações. Um rebuild a partir do código atual poderia produzir
+bytes diferentes — por isso ele não acontece aqui.
+
+Serve para dois casos:
+
+1. **versões anteriores ao Docker Hub** (a `0.1.2` chegou lá assim);
+2. **recuperação**: se um push falhar só na metade do Docker Hub, refazer a
+   release é impossível — a tag do GHCR já existe e não se regrava. Promover o
+   índice que ficou publicado é o caminho correto.
+
+Ele confere, antes de escrever, que a origem existe e traz `linux/amd64` e
+`linux/arm64`; recusa regravar uma tag de versão do Docker Hub que aponte para
+outro digest (repetir a mesma promoção é inofensivo e passa); recusa mover o
+`latest` para uma prerelease; e, depois de escrever, relê o Docker Hub exigindo
+as duas arquiteturas e o digest idêntico ao da origem.
+
+O equivalente manual, quando você tem `docker login` no Docker Hub:
+
+```bash
+digest="$(docker buildx imagetools inspect \
+  ghcr.io/higorcamposs/pokemon-mcp-server:0.1.2 --format '{{.Manifest.Digest}}')"
+
+docker buildx imagetools create \
+  --tag docker.io/higorcamposs/pokemon-mcp-server:0.1.2 \
+  --tag docker.io/higorcamposs/pokemon-mcp-server:latest \
+  "ghcr.io/higorcamposs/pokemon-mcp-server@${digest}"
+```
+
+Prefira o workflow: ele faz as conferências acima, que o comando solto não faz.
+
 ## Regras que não mudam
 
-- **Tag de versão não se regrava.** Quem baixou `:0.1.2` ontem precisa receber
-  os mesmos bytes hoje. O workflow recusa publicar sobre uma versão existente.
+- **Tag de versão não se regrava, em nenhum dos dois registries.** Quem baixou
+  `:0.1.2` ontem precisa receber os mesmos bytes hoje. O workflow recusa
+  publicar sobre uma versão existente em qualquer um dos destinos.
+- **Uma imagem, dois registries.** Nunca construa uma imagem separada para o
+  Docker Hub: o digest tem de ser o mesmo. Para levar algo já publicado, copie
+  o índice (promoção), não reconstrua.
 - **`latest` é ponteiro móvel**, e só aponta para a versão estável mais nova.
   Nunca para prerelease, nunca para uma versão antiga publicada depois.
 - **Só o `runtime` é publicado.** O estágio `dev` carrega `pytest` e a suíte;
   ele existe para testar, não para distribuir.
-- **Nenhum token pessoal no repositório.** O `GITHUB_TOKEN` do Actions basta, e
-  `packages: write` existe apenas no job que publica.
+- **Nenhum token em arquivo.** O `GITHUB_TOKEN` do Actions cobre o GHCR, com
+  `packages: write` apenas no job que publica. O Docker Hub usa o secret
+  `DOCKERHUB_TOKEN`, que fica no cofre do repositório e nunca é commitado,
+  impresso ou escrito em disco.
 - **Publicar a imagem não publica o endpoint.** O servidor continua local.

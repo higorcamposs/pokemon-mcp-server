@@ -132,7 +132,7 @@ Revalidação completa **depois** da troca, em 16/09/2026:
 | Suíte de testes | `186 passed` ✅ |
 | Smoke test | `SMOKE TEST OK`, exit 0, 33 `[ok]`, protocolo `2026-07-28` ✅ |
 
-## Publicação da imagem no GHCR
+## Publicação da imagem (GHCR e Docker Hub)
 
 Registro da distribuição da imagem, em 17/09/2026. Esta seção é sobre o
 **artefato publicado**, não sobre o código no diretório de trabalho.
@@ -209,6 +209,53 @@ Servidor anunciado: `Pokémon MCP Server 0.1.2`.
 - [x] erro de Pokémon inexistente foi tratado
 - [x] Resource `pokemon://guide` listado e lido
 - [x] Prompt `compare_pokemon` listado e obtido
+
+### Docker Hub: promoção da `0.1.2` (17/09/2026)
+
+A `0.1.2` foi levada ao Docker Hub **sem rebuild**, copiando o índice multiarch
+que já estava no GHCR com `docker buildx imagetools create`, a partir do
+**digest** (não da tag). Reconstruir a partir do código atual poderia gerar
+bytes diferentes; copiar não pode.
+
+```bash
+docker buildx imagetools create \
+  --tag docker.io/higorcamposs/pokemon-mcp-server:0.1.2 \
+  --tag docker.io/higorcamposs/pokemon-mcp-server:latest \
+  ghcr.io/higorcamposs/pokemon-mcp-server@sha256:04505f07d0efbc91d914fabd6cce083733e59d77bb4d56c4315b3213d853d165
+```
+
+Executado na máquina descrita no topo deste arquivo, com `docker login` pessoal
+no Docker Hub. A saída do comando registra `copying ... from ghcr.io ... to
+docker.io` para os dois manifestos de arquitetura — cópia, não build.
+
+| Verificação | Método | Resultado |
+| --- | --- | --- |
+| Tags publicadas | API pública do Docker Hub | ✅ `0.1.2` e `latest` |
+| Digest do índice | `imagetools inspect` nos dois registries | ✅ `sha256:04505f07…d165`, **idêntico** ao do GHCR |
+| Digests por arquitetura | `docker manifest inspect` anônimo | ✅ `amd64 sha256:66fa9406…`, `arm64 sha256:a84e10fe…`, iguais aos do GHCR |
+| Tipo do manifesto | `docker manifest inspect` anônimo | ✅ `application/vnd.oci.image.index.v1+json` |
+| Arquiteturas no índice | `docker manifest inspect` anônimo | ✅ `linux/amd64` e `linux/arm64` |
+| Visibilidade | `GET /v2/repositories/...` sem credenciais | ✅ público (`is_private: false`) |
+| Download sem credenciais | `docker --config <tmp> pull` | ✅ baixou; digest confirmado no `RepoDigests` |
+| Anotações OCI do índice | `imagetools inspect --raw` | ✅ `title`, `description`, `licenses`, `version`, `revision`, `source` preservados |
+| Labels da imagem | `imagetools inspect` (`linux/arm64`) | ✅ mesmos valores; `version` `0.1.2`, `revision` `9b08599…` |
+| `latest` | API pública do Docker Hub | ✅ mesmo digest da `0.1.2`, a estável mais nova |
+
+Execução da imagem **baixada do Docker Hub**:
+
+| Arquitetura | Testada | Método | Resultado |
+| --- | --- | --- | --- |
+| `linux/arm64` | **sim** | execução **nativa** (Apple Silicon) | `healthy`, usuário `pokemon`, `/health` `{"status":"ok",…}` |
+| `linux/amd64` | **sim** | **emulação** (`--platform linux/amd64`) | `healthy`, usuário `pokemon`, `/health` `{"status":"ok",…}` |
+
+O smoke completo pelo protocolo MCP **não** foi repetido contra a imagem do
+Docker Hub: ela é byte a byte a mesma do GHCR (mesmo digest), onde o smoke já
+passou. Nas duas arquiteturas foram validados inicialização, `/health` e
+usuário não root.
+
+A partir da próxima release, a publicação nos dois registries passa a ser
+automática no mesmo build do workflow `publish image`; a promoção manual fica
+para versões antigas e para recuperação.
 
 ### Consumo sem clonar o repositório
 

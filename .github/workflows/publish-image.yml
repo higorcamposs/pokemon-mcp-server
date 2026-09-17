@@ -1,4 +1,9 @@
-# Publica a imagem de execução no GHCR quando uma release é publicada.
+# Publica a imagem de execução quando uma release é publicada, em dois
+# registries: GHCR e Docker Hub.
+#
+# Um único build multiarch: o MESMO índice OCI produzido pelo Buildx recebe as
+# tags dos dois registries e é enviado para ambos no mesmo push. Não existem
+# duas imagens nem dois builds — existe uma imagem em duas distribuições.
 #
 # Gatilho único de propósito: `release: published`. Usar também `push` de tag
 # faria o mesmo lançamento publicar duas vezes, em corrida uma com a outra.
@@ -14,6 +19,10 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # O Docker Hub é opcional por configuração, não por descuido: o destino sai
+  # da variable DOCKERHUB_USERNAME e do secret DOCKERHUB_TOKEN do repositório.
+  # Sem os dois, a release ainda sai no GHCR e o job avisa em alto e bom som.
+  DOCKERHUB_REGISTRY: docker.io
 
 permissions:
   contents: read
@@ -131,7 +140,7 @@ jobs:
   # 2. Publicar — só depois que a validação acima passou (needs).
   # ---------------------------------------------------------------------------
   publish:
-    name: publicar no GHCR
+    name: publicar a imagem
     needs: validate
     runs-on: ubuntu-latest
     permissions:
@@ -145,6 +154,26 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
           persist-credentials: false
 
+      - name: Decidir se esta publicação inclui o Docker Hub
+        id: hub
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          # Só a PRESENÇA do secret é testada aqui. O valor nunca é impresso,
+          # nunca vira output e nunca é escrito em arquivo.
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+            image="${{ env.DOCKERHUB_REGISTRY }}/${DOCKERHUB_USERNAME}/${{ github.event.repository.name }}"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "image=$image" >> "$GITHUB_OUTPUT"
+            echo "Docker Hub incluído nesta publicação: $image"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "image=" >> "$GITHUB_OUTPUT"
+            echo "::warning::Sem a variable DOCKERHUB_USERNAME e/ou o secret DOCKERHUB_TOKEN: esta release sai SOMENTE no GHCR. Configure os dois e use o workflow 'promote image' para levar esta versão ao Docker Hub sem reconstruir."
+          fi
+
       - name: Login no GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -152,17 +181,35 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Login no Docker Hub
+        if: steps.hub.outputs.enabled == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.DOCKERHUB_REGISTRY }}
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Recusar regravar uma tag de versão já publicada
         # Uma tag de versão é um contrato: quem baixou :0.1.0 ontem precisa
         # receber os mesmos bytes hoje. `latest` é ponteiro móvel e pode mudar.
+        #
+        # A conferência vale para CADA registry de destino. Um destino que
+        # ainda não tem o repositório criado responde como "não existe", que é
+        # exatamente o caso seguro.
         run: |
           set -euo pipefail
-          ref="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate.outputs.version }}"
-          if docker manifest inspect "$ref" > /dev/null 2>&1; then
-            echo "::error::$ref já existe no registry. Publique uma versão nova em vez de regravar esta."
-            exit 1
+          refs="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate.outputs.version }}"
+          if [ "${{ steps.hub.outputs.enabled }}" = "true" ]; then
+            refs="$refs ${{ steps.hub.outputs.image }}:${{ needs.validate.outputs.version }}"
           fi
-          echo "$ref ainda não existe: seguro publicar."
+
+          for ref in $refs; do
+            if docker manifest inspect "$ref" > /dev/null 2>&1; then
+              echo "::error::$ref já existe no registry. Publique uma versão nova em vez de regravar esta."
+              exit 1
+            fi
+            echo "$ref ainda não existe: seguro publicar."
+          done
 
       - name: Configurar QEMU (para construir linux/arm64 no runner amd64)
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
@@ -179,7 +226,12 @@ jobs:
           # página lê o ÍNDICE multiarch, não as imagens de dentro dele.
           DOCKER_METADATA_ANNOTATIONS_LEVELS: index,manifest
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Dois nomes, um build. A metadata-action gera o mesmo conjunto de
+          # tags para cada registry listado aqui, e a linha vazia (quando o
+          # Docker Hub está desligado) é descartada pela própria action.
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+            ${{ steps.hub.outputs.image }}
           tags: |
             type=raw,value=${{ needs.validate.outputs.version }}
             type=raw,value=latest,enable=${{ github.event.release.prerelease == false }}
@@ -219,6 +271,42 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Conferir o que ficou publicado em cada registry
+        # Publicar não é o mesmo que estar publicado. Aqui o registry é lido de
+        # volta: o índice precisa existir, trazer as duas arquiteturas e ser o
+        # MESMO digest nos dois destinos — prova de que a imagem é uma só.
+        run: |
+          set -euo pipefail
+          digest="${{ steps.build.outputs.digest }}"
+
+          refs="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate.outputs.version }}"
+          if [ "${{ steps.hub.outputs.enabled }}" = "true" ]; then
+            refs="$refs ${{ steps.hub.outputs.image }}:${{ needs.validate.outputs.version }}"
+          fi
+
+          for ref in $refs; do
+            echo "::group::$ref"
+            platforms="$(docker buildx imagetools inspect "$ref" \
+              --format '{{range .Manifest.Manifests}}{{if .Platform.OS}}{{.Platform.OS}}/{{.Platform.Architecture}} {{end}}{{end}}')"
+            found_digest="$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')"
+            echo "arquiteturas: $platforms"
+            echo "digest: $found_digest"
+            echo "::endgroup::"
+
+            case "$platforms" in
+              *linux/amd64*) ;;
+              *) echo "::error::$ref não traz linux/amd64."; exit 1 ;;
+            esac
+            case "$platforms" in
+              *linux/arm64*) ;;
+              *) echo "::error::$ref não traz linux/arm64."; exit 1 ;;
+            esac
+            if [ "$found_digest" != "$digest" ]; then
+              echo "::error::$ref aponta para $found_digest, e não para o índice construído ($digest)."
+              exit 1
+            fi
+          done
+
       - name: Registrar o resultado no resumo da execução
         run: |
           {
@@ -228,6 +316,7 @@ jobs:
             echo "| --- | --- |"
             echo "| Release | \`${{ github.event.release.tag_name }}\` |"
             echo "| Versão | \`${{ needs.validate.outputs.version }}\` |"
+            echo "| Registries | \`${{ env.REGISTRY }}\`${{ steps.hub.outputs.enabled == 'true' && ', `docker.io`' || ' (Docker Hub fora: faltam DOCKERHUB_USERNAME/DOCKERHUB_TOKEN)' }} |"
             echo "| Revisão (SHA) | \`${{ needs.validate.outputs.sha }}\` |"
             echo "| Arquiteturas | \`linux/amd64\`, \`linux/arm64\` |"
             echo "| Estágio | \`runtime\` |"
@@ -239,8 +328,13 @@ jobs:
             echo '```'
             echo
             echo "### Baixar por digest (imutável)"
+            echo
+            echo "O digest é o mesmo nos dois registries: o índice publicado é um só."
             echo '```bash'
             echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+            if [ "${{ steps.hub.outputs.enabled }}" = "true" ]; then
+              echo "docker pull ${{ steps.hub.outputs.image }}@${{ steps.build.outputs.digest }}"
+            fi
             echo '```'
             echo
             echo "> Publicar a imagem **não** publica o endpoint do servidor."

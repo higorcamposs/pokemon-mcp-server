@@ -197,9 +197,9 @@ capacidades. Use o Inspector ou o smoke test para verificar o conjunto completo.
 - uma aplicação executada em contêiner precisa de uma rota até o Host;
 - um serviço hospedado na nuvem não alcança o seu `localhost`.
 
-Publicar a imagem no GHCR não muda isso. A imagem é um programa para download,
-não um servidor hospedado. Não abra um túnel público para este laboratório: ele
-não possui autenticação.
+Publicar a imagem num registry (GHCR ou Docker Hub) não muda isso. A imagem é
+um programa para download, não um servidor hospedado. Não abra um túnel público
+para este laboratório: ele não possui autenticação.
 
 ## Host, Origin e porta
 
