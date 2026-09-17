@@ -132,6 +132,97 @@ Revalidação completa **depois** da troca, em 16/09/2026:
 | Suíte de testes | `186 passed` ✅ |
 | Smoke test | `SMOKE TEST OK`, exit 0, 33 `[ok]`, protocolo `2026-07-28` ✅ |
 
+## Publicação da imagem no GHCR
+
+Registro da distribuição da imagem, em 17/09/2026. Esta seção é sobre o
+**artefato publicado**, não sobre o código no diretório de trabalho.
+
+### Versões publicadas
+
+| Versão | Commit | Digest do índice multiarch | `latest` | Situação |
+| --- | --- | --- | --- | --- |
+| `0.1.0` | `1451c32` | `sha256:f54da006d027ed33c41a3ccf9f2815cf598176407f355c55b3371422542eb29e` | não | publicada e **intacta**; `title`/`description` OCI errados |
+| `0.1.1` | `7e0fb7f` | `sha256:3c7748f06aa647156a5152957b979bfc03f5694c6b8de29022e23a1baddca4b4` | passou a apontar | corrige os metadados OCI |
+
+A `0.1.0` **não foi regravada**: seu digest continua o mesmo depois da
+publicação da `0.1.1`. Foi conferido na API anônima do GHCR. Uma tag de versão
+distribuída é um contrato; a correção saiu como versão nova.
+
+O defeito da `0.1.0` só apareceu porque a verificação foi feita na imagem
+**baixada do registry**, e não na imagem local de build: o `metadata-action`
+aplica os labels dele por cima dos `LABEL` do Dockerfile, então valiam os
+automáticos (`title` = nome do repositório, `description` vazia).
+
+### Execuções do workflow
+
+| Release | Run de `publish image` | Jobs |
+| --- | --- | --- |
+| `v0.1.0` | <https://github.com/higorcamposs/pokemon-mcp-server/actions/runs/35166058161> | `validar a release`: success · `publicar no GHCR`: success |
+| `v0.1.1` | <https://github.com/higorcamposs/pokemon-mcp-server/actions/runs/35166598151> | `validar a release`: success · `publicar no GHCR`: success |
+
+CI `tests` do commit lançado em cada caso:
+`1451c32` → <https://github.com/higorcamposs/pokemon-mcp-server/actions/runs/35166005887> (success).
+
+### Verificações sobre a imagem baixada do GHCR (`0.1.1`)
+
+| Verificação | Método | Resultado |
+| --- | --- | --- |
+| Download sem credenciais | `docker --config <tmp> pull`, config temporário e vazio | ✅ baixou; login pessoal não foi tocado |
+| Visibilidade do pacote | token anônimo do GHCR concedido | ✅ público |
+| Arquiteturas no índice | API anônima do registry | ✅ `linux/amd64` e `linux/arm64` |
+| `title` / `description` / `licenses` | `docker image inspect` | ✅ `Pokémon MCP Server`, descrição preenchida, `MIT` |
+| `version` / `revision` | `docker image inspect` | ✅ `0.1.1` / `7e0fb7f69d8baac02d26d8d259eb836a9c32ae09`, igual ao commit da tag |
+| Anotação do índice | API anônima do registry | ✅ `title` e `description` presentes no índice |
+| Usuário de execução | `docker exec ... id -un` | ✅ `pokemon` (não root) |
+| Licença embutida | `head -1 /app/LICENSE` | ✅ `MIT License` |
+| Ausência de ferramentas de teste | `python -c 'import pytest'` | ✅ ausente (estágio `runtime`) |
+
+### Arquiteturas: construídas × efetivamente testadas
+
+Aparecer no manifesto não é ter sido testado. O que foi realmente executado:
+
+| Arquitetura | Construída | Testada | Método | Resultado |
+| --- | --- | --- | --- | --- |
+| `linux/arm64` | sim | **sim** | execução **nativa** (Apple Silicon) | `healthy`, não root, **smoke MCP completo: 33 `[ok]`, 0 falhas** |
+| `linux/amd64` | sim | **sim** | **emulação** (Docker Desktop/QEMU) | `healthy`, não root, `/health` 200 |
+
+O smoke completo pelo protocolo MCP passou em `linux/arm64`. Em `linux/amd64`
+foram validados inicialização, `/health` e usuário — não o smoke completo.
+
+### Smoke MCP contra o servidor baixado do GHCR
+
+Cliente do SDK oficial, em contêiner separado (`uv` e `pytest` não existem no
+runtime, e não deveriam). Versão do protocolo negociada: **`2026-07-28`**.
+Servidor anunciado: `Pokémon MCP Server 0.1.1`.
+
+- [x] MCP Client conectou
+- [x] Tools foram descobertas
+- [x] `get_pokemon("pikachu")` funcionou
+- [x] `get_pokemon("25")` funcionou
+- [x] `get_ability("static")` funcionou
+- [x] `get_type("electric")` funcionou
+- [x] erro de Pokémon inexistente foi tratado
+- [x] Resource `pokemon://guide` listado e lido
+- [x] Prompt `compare_pokemon` listado e obtido
+
+### Consumo sem clonar o repositório
+
+Testado numa pasta **vazia**, baixando apenas o arquivo pela URL raw da tag:
+
+```bash
+curl -O https://raw.githubusercontent.com/higorcamposs/pokemon-mcp-server/v0.1.1/compose.ghcr.yaml
+MCP_HOST_PORT=8020 docker compose -f compose.ghcr.yaml pull
+MCP_HOST_PORT=8020 docker compose -f compose.ghcr.yaml up -d
+```
+
+Resultado: `Up (healthy)`, `127.0.0.1:8020->8000/tcp`, `/health` respondendo, e
+a allowlist acompanhando a porta escolhida —
+`127.0.0.1:8000, localhost:8000, [::1]:8000, 127.0.0.1:8020, localhost:8020, [::1]:8020`.
+
+Este teste revelou que o `compose.ghcr.yaml` usava o mesmo nome de projeto do
+`compose.yaml`, de forma que um `down` no primeiro removia a rede do segundo.
+Corrigido na `0.1.2` com o projeto `pokemon-mcp-ghcr`.
+
 ## Evidências MCP
 
 Marque só o que você observou com os próprios olhos. Os itens abaixo foram

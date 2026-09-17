@@ -75,9 +75,9 @@ Confira o workflow `tests` do commit exato que vai ser lançado, na aba
 A release é o gatilho. Aponte-a para o commit conferido no passo anterior:
 
 ```bash
-gh release create v0.1.1 \
+gh release create v0.1.2 \
   --target <sha-do-commit> \
-  --title "v0.1.1" \
+  --title "v0.1.2" \
   --notes "Descreva o que mudou nesta versão."
 ```
 
@@ -120,8 +120,8 @@ diretório de configuração temporário do Docker — assim o seu login pessoal
 
 ```bash
 TMPCFG="$(mktemp -d)"
-docker --config "$TMPCFG" pull ghcr.io/higorcamposs/pokemon-mcp-server:0.1.1
-docker --config "$TMPCFG" manifest inspect ghcr.io/higorcamposs/pokemon-mcp-server:0.1.1 \
+docker --config "$TMPCFG" pull ghcr.io/higorcamposs/pokemon-mcp-server:0.1.2
+docker --config "$TMPCFG" manifest inspect ghcr.io/higorcamposs/pokemon-mcp-server:0.1.2 \
   | grep -E '"architecture"|"os"'
 rm -rf "$TMPCFG"
 ```
@@ -138,12 +138,12 @@ passe os extras de allowlist correspondentes à porta escolhida:
 docker run -d --name pmcp-verify -p 127.0.0.1:8010:8000 \
   -e MCP_EXTRA_ALLOWED_HOSTS=localhost:8010,127.0.0.1:8010 \
   -e MCP_EXTRA_ALLOWED_ORIGINS=http://localhost:8010,http://127.0.0.1:8010 \
-  ghcr.io/higorcamposs/pokemon-mcp-server:0.1.1
+  ghcr.io/higorcamposs/pokemon-mcp-server:0.1.2
 
 curl http://localhost:8010/health
 docker inspect pmcp-verify --format '{{.State.Health.Status}}'
 docker exec pmcp-verify id -un          # precisa ser "pokemon", não root
-docker image inspect ghcr.io/higorcamposs/pokemon-mcp-server:0.1.1 \
+docker image inspect ghcr.io/higorcamposs/pokemon-mcp-server:0.1.2 \
   --format '{{json .Config.Labels}}'
 ```
 
@@ -180,7 +180,7 @@ tag. Use as notas da release ou um commit novo de documentação.
 
 ## Regras que não mudam
 
-- **Tag de versão não se regrava.** Quem baixou `:0.1.1` ontem precisa receber
+- **Tag de versão não se regrava.** Quem baixou `:0.1.2` ontem precisa receber
   os mesmos bytes hoje. O workflow recusa publicar sobre uma versão existente.
 - **`latest` é ponteiro móvel**, e só aponta para a versão estável mais nova.
   Nunca para prerelease, nunca para uma versão antiga publicada depois.

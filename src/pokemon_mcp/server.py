@@ -177,7 +177,7 @@ INSTRUCTIONS: Final = (
 
 mcp = MCPServer(
     "Pokémon MCP Server",
-    version="0.1.1",
+    version="0.1.2",
     instructions=INSTRUCTIONS,
     lifespan=lifespan,
     log_level=os.getenv("MCP_LOG_LEVEL", "INFO"),

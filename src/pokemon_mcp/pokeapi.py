@@ -165,7 +165,7 @@ class PokeAPIClient:
         cache_ttl_seconds: float = DEFAULT_CACHE_TTL_SECONDS,
         cache_max_entries: int = DEFAULT_CACHE_MAX_ENTRIES,
         transport: httpx2.AsyncBaseTransport | None = None,
-        user_agent: str = "pokemon-mcp-server/0.1.1 (+laboratorio educacional MCP)",
+        user_agent: str = "pokemon-mcp-server/0.1.2 (+laboratorio educacional MCP)",
     ) -> None:
         self.base_url = base_url if base_url.endswith("/") else base_url + "/"
         self._cache = TTLCache(cache_ttl_seconds, cache_max_entries)

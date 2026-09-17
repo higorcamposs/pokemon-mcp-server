@@ -3,7 +3,7 @@
 # Este arquivo é AUTOSSUFICIENTE: baixe só ele numa pasta vazia e funcione.
 # Não precisa de clone, de .env, de Python nem de `uv` na máquina.
 #
-#   curl -O https://raw.githubusercontent.com/higorcamposs/pokemon-mcp-server/v0.1.1/compose.ghcr.yaml
+#   curl -O https://raw.githubusercontent.com/higorcamposs/pokemon-mcp-server/v0.1.2/compose.ghcr.yaml
 #   docker compose -f compose.ghcr.yaml pull
 #   docker compose -f compose.ghcr.yaml up -d
 #   docker compose -f compose.ghcr.yaml ps
@@ -14,7 +14,12 @@
 #
 # Para DESENVOLVER ou modificar o servidor, use o compose.yaml do repositório,
 # que constrói a imagem a partir do código. Aqui não há `build:` de propósito.
-name: pokemon-mcp
+#
+# O nome do projeto é diferente do usado pelo compose.yaml de propósito: assim
+# um `down` aqui não mexe na rede do laboratório de desenvolvimento de quem tem
+# os dois. Os dois ainda não rodam ao mesmo tempo, porque disputam o mesmo nome
+# de contêiner e a mesma porta — pare um antes de subir o outro.
+name: pokemon-mcp-ghcr
 
 services:
   pokemon-mcp-server:
@@ -23,7 +28,7 @@ services:
     # Para fixar de forma realmente imutável, troque pela forma com digest:
     #   image: ghcr.io/higorcamposs/pokemon-mcp-server@sha256:<digest>
     # O digest de cada versão está nas notas da release.
-    image: ghcr.io/higorcamposs/pokemon-mcp-server:${MCP_IMAGE_TAG:-0.1.1}
+    image: ghcr.io/higorcamposs/pokemon-mcp-server:${MCP_IMAGE_TAG:-0.1.2}
     container_name: pokemon-mcp-server
 
     # Publica a porta SOMENTE no loopback da máquina. Não troque por
