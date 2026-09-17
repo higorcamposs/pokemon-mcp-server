@@ -12,11 +12,12 @@ se você quiser manter o histórico).
 | Item | Valor |
 | --- | --- |
 | Data | 16/09/2026 |
-| Commit testado | `36c8995` **mais** as alterações desta rodada ainda não commitadas (allowlists com extras, validação das variáveis numéricas, ordenação de `types` por slot, docs). Ao commitar, troque por um hash único. |
+| Commit testado | `53fde4e` (allowlists com extras, validação das variáveis numéricas, ordenação de `types` por slot, docs) **mais** a troca das imagens base para trixie, ainda no diretório de trabalho |
 | Sistema operacional | macOS 26.6.2 (Darwin 25.6.0, arm64) |
 | Docker | 29.7.2 |
 | Docker Compose | v5.5.1 |
-| Python (contêiner de testes) | 3.12.12 |
+| Imagens base | `python:3.12-slim-trixie` e `ghcr.io/astral-sh/uv:python3.12-trixie-slim` (Debian 13) |
+| Python (contêiner de testes) | 3.12.14 |
 | Python (CI) | 3.12 (`actions/setup-python@v5` com `python-version: "3.12"`) |
 | SDK MCP | `mcp` 2.2.0 (linha 2.x, classe `MCPServer`) |
 | Endpoint MCP | `http://localhost:8000/mcp` (Streamable HTTP) |
@@ -44,15 +45,17 @@ CI — ele precisa do contêiner no ar e de internet, e é executado à mão.
 
 | Resultado | Valor |
 | --- | --- |
-| `pytest` | **a preencher** com o resultado do run da CI para o commit desta rodada |
+| `pytest` | **a preencher** com o resultado do run da CI |
 | Quantidade de testes | **186** (execução local de 16/09/2026; a suíte é a mesma na CI) |
 | `docker build` | **a preencher** com o resultado do run da CI |
 | Link do run | **a preencher** (aba *Actions* do repositório) |
 
-> As duas linhas "a preencher" ficam assim de propósito: no momento em que este
-> arquivo foi escrito, as alterações desta rodada ainda não tinham sido
-> enviadas ao GitHub, então não existe run de CI para elas. Preencha depois do
-> push, copiando o resultado real.
+> As linhas "a preencher" ficam assim de propósito. O commit `53fde4e` já está
+> em `origin/main`, então a CI deve ter um run correspondente — ele só não foi
+> lido aqui, porque a máquina que fez esta validação não tinha acesso
+> autenticado ao GitHub. Abra a aba *Actions*, confira o run desse commit e
+> copie o resultado real. A troca das imagens base ainda não foi commitada e
+> não tem run nenhum.
 
 ## Validação local
 
@@ -65,7 +68,7 @@ e substitua os resultados pelos seus.
 | 2 | `docker compose up -d --build` | imagem `pokemon-mcp-server:0.1.0` construída, contêiner iniciado ✅ |
 | 3 | `docker compose ps` | `Up ... (healthy)`, portas `127.0.0.1:8000->8000/tcp` ✅ |
 | 4 | `curl http://localhost:8000/health` | `{"status":"ok","server":"pokemon-mcp-server"}` ✅ |
-| 5 | `docker compose --profile test run --build --rm tests` | `186 passed in 0.43s` (Python 3.12.12, pytest 9.1.1) ✅ |
+| 5 | `docker compose --profile test run --build --rm tests` | `186 passed in 0.48s` (Python 3.12.14, pytest 9.1.1) ✅ |
 | 6 | `docker compose --profile test run --build --rm smoke` | `SMOKE TEST OK`, código de saída 0, 33 verificações `[ok]` e nenhuma `[FALHA]`, protocolo `2026-07-28` ✅ |
 | 7 | `docker compose logs pokemon-mcp-server` | allowlists registradas na inicialização, `GET /health 200 OK`, nenhum traceback ✅ — a única linha de falha é a esperada do passo 7 do smoke (`Tool 'get_pokemon' failed: ... não encontrou 'pikachuu'`), que é o teste de erro tratado |
 
@@ -109,6 +112,26 @@ Ou seja: mínimos obrigatórios + porta publicada (`MCP_HOST_PORT`) + extras do
 usuário, nessa ordem e sem repetição. Com `MCP_HOST_PORT=8000` (o padrão) a
 lista fica com apenas três entradas, porque as duas metades coincidem.
 
+### Troca das imagens base para Debian 13 (trixie)
+
+Em 16/09/2026 as imagens base saíram de bookworm para trixie, porque a variante
+bookworm da imagem do `uv` estava sem atualização havia sete meses (detalhes e
+datas em [versoes-e-referencias.md](versoes-e-referencias.md#por-que-trixie-e-não-bookworm)).
+O Python continua em 3.12 e nem `pyproject.toml` nem `uv.lock` mudaram.
+
+Revalidação completa **depois** da troca, em 16/09/2026:
+
+| Verificação | Resultado |
+| --- | --- |
+| `docker compose build --pull` | imagens reconstruídas sem erro ✅ |
+| `docker compose ps` | `Up (healthy)` ✅ |
+| Distribuição dentro do contêiner | `Debian GNU/Linux 13 (trixie)` ✅ |
+| Python dentro do contêiner | `3.12.14` (era 3.12.12 no builder bookworm) ✅ |
+| `uv` na imagem de build | `0.12.15` (era 0.9.30) ✅ |
+| `curl http://localhost:8000/health` | `{"status":"ok","server":"pokemon-mcp-server"}` ✅ |
+| Suíte de testes | `186 passed` ✅ |
+| Smoke test | `SMOKE TEST OK`, exit 0, 33 `[ok]`, protocolo `2026-07-28` ✅ |
+
 ## Evidências MCP
 
 Marque só o que você observou com os próprios olhos. Os itens abaixo foram
@@ -146,8 +169,9 @@ preencher com o seu cliente (MCP Inspector, IDE, Codex local — veja
 
 Honestidade sobre os limites deste registro:
 
-- **CI para esta rodada**: as alterações ainda não foram enviadas ao GitHub, e
-  não existe run correspondente.
+- **CI**: o run de `53fde4e` existe, mas não foi lido nesta validação (sem
+  acesso autenticado ao GitHub na máquina). A troca das imagens base ainda está
+  só no diretório de trabalho.
 - **`uv run pytest -v` fora do Docker**: `uv` não está instalado na máquina que
   fez esta validação. A suíte rodou dentro do contêiner `tests`, que instala
   exatamente o `uv.lock` — é o mesmo conjunto de pacotes que a CI usa.

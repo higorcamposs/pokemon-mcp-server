@@ -326,7 +326,7 @@ As versões fixadas e a documentação oficial consultada estão em
 Em resumo: Python 3.12, SDK oficial `mcp` 2.2.0 (linha 2.x, classe
 `MCPServer`), `httpx2` 2.13.0 e `pydantic` 2.13.5. As dependências Python estão
 fixadas no `uv.lock` (versão e hash); as imagens base do Docker usam tags de
-linha (`python:3.12-slim-bookworm`), que continuam em 3.12 mas recebem
+linha (`python:3.12-slim-trixie`, Debian 13), que continuam em 3.12 mas recebem
 atualizações — elas não estão fixadas por digest.
 
 ## Registro de validação

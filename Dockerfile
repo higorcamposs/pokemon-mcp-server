@@ -2,7 +2,13 @@
 
 # Imagem oficial do uv já com Python 3.12, para instalar as dependências
 # exatamente como estão no uv.lock.
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+#
+# Base Debian 13 (trixie), não bookworm: a Astral parou de publicar atualizações
+# da variante bookworm (a última é de fevereiro/2026), então continuar nela
+# significaria construir com um uv congelado. O Python continua sendo 3.12, que
+# é o que `requires-python` exige — nada no `pyproject.toml` ou no `uv.lock`
+# muda por causa desta troca.
+FROM ghcr.io/astral-sh/uv:python3.12-trixie-slim AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -21,7 +27,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 
 # --- Imagem de execução: Python slim, sem uv e sem ferramentas de build. ---
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.12-slim-trixie AS runtime
 
 # O endereço interno (0.0.0.0:8000 e /mcp) é fixo no código do servidor, em
 # src/pokemon_mcp/__main__.py: não há variável de ambiente para mudá-lo.

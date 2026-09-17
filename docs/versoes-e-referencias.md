@@ -12,10 +12,11 @@ quanto disso é realmente reprodutível.
 | `pydantic` | 2.13.5 | fixado em `pyproject.toml` e no `uv.lock` |
 | `pytest` | 9.1.1 | fixado no grupo `dev` do `pyproject.toml` |
 | `anyio` (plugin pytest para testes assíncronos) | 4.15.1 | fixado no grupo `dev` do `pyproject.toml` |
-| Python | linha 3.12 (3.12.12 na execução verificada em 16/09/2026) | `requires-python = ">=3.12,<3.13"` e a tag da imagem base |
-| Imagem de execução | `python:3.12-slim-bookworm` | tag de linha no `Dockerfile` |
-| Imagem de build | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` | tag de linha no `Dockerfile` |
-| `uv` | o que vier nessa tag (0.9.30 na execução verificada) | não fixado |
+| Python | linha 3.12 (3.12.14 na execução verificada em 16/09/2026) | `requires-python = ">=3.12,<3.13"` e a tag da imagem base |
+| Imagem de execução | `python:3.12-slim-trixie` | tag de linha no `Dockerfile` |
+| Imagem de build | `ghcr.io/astral-sh/uv:python3.12-trixie-slim` | tag de linha no `Dockerfile` |
+| Debian das imagens | 13 (trixie) | vem das tags acima |
+| `uv` | o que vier nessa tag (0.12.15 na execução verificada) | não fixado |
 
 ## O que é reprodutível e o que não é
 
@@ -28,12 +29,12 @@ versão e hash, incluindo as transitivas (entre elas `starlette` 1.6.0 e
 
 **Não fixado, e tudo bem para um laboratório didático:**
 
-- **As imagens base.** `python:3.12-slim-bookworm` e
-  `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` são tags de linha: elas
+- **As imagens base.** `python:3.12-slim-trixie` e
+  `ghcr.io/astral-sh/uv:python3.12-trixie-slim` são tags de linha: elas
   continuam apontando para 3.12, mas recebem correções de segurança e mudanças
   de patch com o tempo. Duas construções em datas diferentes podem trazer
   Python 3.12.x diferentes e versões diferentes do `uv`. Fixar por digest
-  (`python:3.12-slim-bookworm@sha256:...`) congelaria isso, ao custo de ter que
+  (`python:3.12-slim-trixie@sha256:...`) congelaria isso, ao custo de ter que
   atualizar o digest na mão a cada correção de segurança — um preço que faz
   sentido em produção, não neste laboratório.
 - **O backend de build.** `[build-system] requires = ["hatchling"]` não tem
@@ -42,6 +43,24 @@ versão e hash, incluindo as transitivas (entre elas `starlette` 1.6.0 e
 
 Em resumo: o `uv.lock` garante as dependências da aplicação, não "tudo o que
 acontece no build".
+
+### Por que trixie e não bookworm
+
+As imagens base foram Debian 12 (bookworm) até 16/09/2026. A troca para Debian
+13 (trixie) aconteceu porque a variante bookworm da imagem do `uv` **parou de
+receber atualizações**: em 16/09/2026, `ghcr.io/astral-sh/uv:python3.12-bookworm-slim`
+tinha sido construída em 04/02/2026 (sete meses antes), enquanto
+`ghcr.io/astral-sh/uv:python3.12-trixie-slim` era do dia anterior. A imagem
+oficial do Python conta a mesma história: existem `python:3.13-slim-trixie` e
+`python:3.14-slim-trixie`, mas não há equivalentes em bookworm.
+
+A troca é só de distribuição: **o Python continua sendo 3.12**, que é o que
+`requires-python = ">=3.12,<3.13"` exige. `pyproject.toml` e `uv.lock` não
+mudaram, e a suíte (186 testes) e o smoke test passaram igual depois da troca.
+
+Subir para a linha 3.13 ou 3.14 seria outra decisão: exigiria mudar
+`requires-python`, regerar o `uv.lock` e reverificar a compatibilidade do
+`mcp` 2.2.0. Isso não foi feito.
 
 ## Por que `httpx2` e não `httpx`
 
