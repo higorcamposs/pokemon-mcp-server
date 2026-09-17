@@ -1,112 +1,83 @@
 # Conectar um cliente MCP
 
-Este documento descreve como apontar um cliente MCP para o servidor deste
-laboratório.
+Este guia mostra como conectar o MCP Inspector, o VS Code e o Codex ao servidor
+local. Para entender o que acontece depois da conexão, leia
+[Como o Pokémon MCP Server funciona](como-funciona.md).
 
-## O endpoint
+## Endpoint e requisitos
 
 | Item | Valor |
 | --- | --- |
 | URL | `http://localhost:8000/mcp` |
 | Transporte | Streamable HTTP |
 | Autenticação | nenhuma |
-| Métodos usados pelo transporte | `POST` (mensagens), `GET` (fluxo servidor→cliente), `DELETE` (encerrar sessão em clientes legados) |
+| Acesso padrão | somente a máquina local |
 
-`http://127.0.0.1:8000/mcp` também funciona. Qualquer outro nome de host é
-recusado com **HTTP 421** até entrar na allowlist: é a proteção contra DNS
-rebinding do SDK, e ela deve continuar ligada.
+`http://127.0.0.1:8000/mcp` também funciona. Se você definiu
+`MCP_HOST_PORT`, substitua `8000` pela porta publicada.
 
-Se você publicou o serviço em outra porta (`MCP_HOST_PORT` no Compose), troque
-`8000` pela porta escolhida em todas as URLs desta página. O Compose já
-acrescenta essa porta às allowlists de `Host` e `Origin`; a porta de dentro do
-contêiner continua sendo 8000.
+Antes de configurar qualquer cliente, confirme:
 
-Para liberar **outro nome de host** (e não outra porta), use o `.env`:
+- [ ] o contêiner está em execução;
+- [ ] `docker ps` mostra o estado `healthy`;
+- [ ] `curl http://localhost:8000/health` devolve `{"status":"ok",...}`;
+- [ ] o cliente roda na mesma máquina que o servidor;
+- [ ] o cliente oferece transporte Streamable HTTP.
 
-```dotenv
-MCP_EXTRA_ALLOWED_HOSTS=meu-host.local:8000
-MCP_EXTRA_ALLOWED_ORIGINS=http://meu-host.local:8000
-```
-
-Esses valores são **somados** à allowlist: `localhost` e `127.0.0.1` continuam
-valendo, e a proteção continua ligada. `MCP_ALLOWED_HOSTS`/`MCP_ALLOWED_ORIGINS`
-não servem para isso quando você sobe pelo Compose — o `compose.yaml` monta as
-duas a partir de `MCP_HOST_PORT` e ignora o que estiver no `.env`. A lista
-final aparece no log de inicialização (`Host allowlist:` e `Origin allowlist:`).
-
-O servidor precisa estar no ar antes de conectar:
+Suba o servidor a partir do repositório com:
 
 ```bash
 docker compose up -d --build
-docker compose ps           # STATUS deve ser "healthy"
+docker compose ps
 ```
 
-## Antes de configurar qualquer cliente: confirme o protocolo
+Ou siga o [Quickstart sem clone](../README.md#quickstart-em-cinco-minutos).
 
-O jeito mais rápido de saber se o problema é o servidor ou o cliente é rodar o
-smoke test, que fala MCP de verdade:
+## MCP Inspector
+
+O MCP Inspector é a opção mais direta para verificar o protocolo sem envolver
+um modelo de IA. Ele mostra as capacidades e permite executá-las manualmente.
+
+### Configurar o Inspector
+
+Pré-requisito adicional: Node.js com `npx`.
+
+Com o servidor no ar:
 
 ```bash
-docker compose --profile test run --build --rm smoke
+npx @modelcontextprotocol/inspector \
+  --server-url http://localhost:8000/mcp \
+  --transport http
 ```
 
-Se ele passa, os cenários exercitados funcionaram nesse ambiente: conexão,
-negociação de protocolo, descoberta, as três Tools, o Resource e o Prompt. Isso
-é uma evidência forte, mas não uma prova de que tudo funciona em qualquer
-lugar. Uma falha em outro cliente ainda pode envolver transporte, versão do
-protocolo, configuração, proxy ou comportamento específico daquela integração —
-por isso vale olhar também os logs do servidor ao reproduzir o erro.
+Abra no navegador a URL impressa no terminal. Os nomes exatos dos botões podem
+mudar entre versões, mas o fluxo continua sendo conectar, listar e executar.
 
-## Testar com o MCP Inspector
+### Testar no Inspector
 
-O [MCP Inspector](https://github.com/modelcontextprotocol/inspector) é a
-ferramenta oficial para inspecionar um servidor MCP sem envolver nenhuma
-aplicação de IA. Ele é uma aplicação Node.js e roda com `npx`.
+1. Abra **Tools** e confirme `get_pokemon`, `get_ability` e `get_type`.
+2. Selecione `get_pokemon`.
+3. Preencha `name_or_id` com `pikachu`.
+4. Execute a Tool.
+5. Abra **Resources** e leia `pokemon://guide`.
+6. Abra **Prompts**, selecione `compare_pokemon` e informe `pikachu` e
+   `bulbasaur`.
 
-1. Com o contêiner no ar, aponte o Inspector diretamente para o endpoint:
+### Confirmar o Inspector
 
-   ```bash
-   npx @modelcontextprotocol/inspector --server-url http://localhost:8000/mcp --transport http
-   ```
+A execução de `get_pokemon` deve devolver `structured_content` com `id: 25`,
+`types: ["electric"]` e um `source_url` da PokéAPI. O Resource deve abrir como
+Markdown. O Prompt deve devolver um template, sem produzir a comparação final.
 
-   `--server-url` é a URL do servidor e `--transport http` seleciona Streamable
-   HTTP (a outra opção documentada é `sse`, que este laboratório não usa).
+Referência: [repositório oficial do MCP Inspector](https://github.com/modelcontextprotocol/inspector).
 
-2. Abra no navegador a URL que o comando imprimir no terminal. A interface web
-   também aceita os mesmos valores como parâmetros de consulta
-   (`?serverUrl=http://localhost:8000/mcp&transport=http`), e é possível
-   preencher a URL pela própria interface depois de abri-la.
+## VS Code
 
-3. Conecte e confira as abas:
-   - **Tools** → listar as ferramentas mostra `get_pokemon`, `get_ability` e
-     `get_type`, cada uma com o formulário gerado a partir do schema. Chame
-     `get_pokemon` com `name_or_id = pikachu`.
-   - **Resources** → listar mostra `pokemon://guide`. Abra para ler o Markdown.
-   - **Prompts** → selecione `compare_pokemon`, preencha `pokemon_a` e
-     `pokemon_b` e peça o Prompt: o Inspector devolve o template de mensagens,
-     sem executar nada.
+O VS Code aceita servidores MCP por Streamable HTTP em um arquivo `mcp.json`.
 
-Referências: <https://github.com/modelcontextprotocol/inspector> e
-`docs/mcp-server-configuration.md` do mesmo repositório (consultados em
-16/09/2026). Os rótulos exatos dos botões e abas mudam entre versões do
-Inspector; o que não muda é a sequência: conectar, listar, executar.
+### Configurar o VS Code
 
-> O `npx` exige Node.js instalado. É o único passo deste laboratório que sai do
-> Docker, e é opcional: as capacidades também são verificadas pelo smoke test.
-
-## Exemplo de configuração em uma aplicação de IA compatível
-
-O exemplo abaixo é o formato documentado pelo **VS Code** para servidores MCP,
-escolhido aqui porque a documentação oficial publica o JSON exato para um
-servidor HTTP. Referência:
-<https://code.visualstudio.com/docs/copilot/customization/mcp-servers>
-(consultada em 16/09/2026).
-
-**Não altere sua configuração pessoal a partir deste arquivo.** O trecho existe
-para ser lido e comparado. Se quiser usá-lo, edite o seu arquivo
-conscientemente e faça uma cópia de segurança antes.
-
-Arquivo `.vscode/mcp.json`, dentro do projeto onde você quer usar o servidor:
+Crie `.vscode/mcp.json` no projeto em que deseja usar o servidor:
 
 ```json
 {
@@ -119,160 +90,181 @@ Arquivo `.vscode/mcp.json`, dentro do projeto onde você quer usar o servidor:
 }
 ```
 
-A chave de topo é `servers`, `type` identifica o transporte HTTP e `url` aponta
-para o endpoint. O mesmo arquivo pode ser criado no perfil do usuário pelo
-comando **MCP: Open User Configuration**.
+Também é possível abrir a configuração do perfil pelo comando
+**MCP: Open User Configuration**. Use a configuração de projeto quando o
+servidor fizer sentido apenas naquele repositório; use a de usuário quando
+quiser disponibilizá-lo em vários projetos.
 
-Avisos importantes e honestos sobre este trecho:
+### Testar no VS Code
 
-- **Cada aplicação tem o seu próprio formato.** O JSON acima vale para o VS
-  Code. Outras aplicações usam arquivos, chaves e comandos diferentes; consulte
-  a documentação oficial da que você usa e não adapte este trecho no escuro.
-- **Nem toda aplicação aceita Streamable HTTP.** Várias só lançam servidores
-  locais por stdio, e um cliente que só fala stdio não conecta aqui sem um
-  adaptador. Por exemplo, a documentação da Claude Desktop para servidores
-  locais (<https://modelcontextprotocol.io/docs/develop/connect-local-servers>,
-  consultada em 16/09/2026) descreve apenas entradas com `command` e `args`,
-  isto é, stdio; para servidores acessíveis por URL, ela orienta a usar os
-  *Custom Connectors* pela interface
-  (<https://modelcontextprotocol.io/docs/develop/connect-remote-servers>),
-  fluxo pensado para servidores publicados na internet — veja a seção seguinte
-  sobre por que `localhost` não serve nesse caso.
-- **Nem toda aplicação expõe Resources e Prompts.** Muitos clientes consomem
-  apenas Tools. O servidor continua anunciando as três capacidades; quem decide
-  usá-las é o cliente. Por isso o MCP Inspector é o melhor lugar para capturar
-  as evidências de Resource e Prompt.
-- **Este servidor não usa autenticação.** Se a sua aplicação exigir token ou
-  OAuth para conectores, ela não vai conseguir conectar sem configuração
-  adicional, que está fora do escopo deste laboratório.
+1. Abra a lista de servidores MCP do VS Code.
+2. Confirme que `pokemon` está conectado e lista as três Tools.
+3. Em uma conversa compatível, peça:
 
-## Codex local
+   > Use a ferramenta do servidor pokemon e consulte os dados do Pikachu.
 
-Esta seção existe só como exemplo de verificação num cliente de terminal que
-roda **na sua máquina**. O laboratório não depende do Codex: o MCP Inspector e
-o smoke test continuam sendo as evidências principais.
+### Confirmar o VS Code
 
-Fonte: documentação oficial da OpenAI sobre MCP no Codex,
-<https://developers.openai.com/codex/mcp/> — que hoje redireciona para
-<https://learn.chatgpt.com/docs/extend/mcp?surface=cli> (consultada em
-16/09/2026). Só está documentado aqui o que consta nessa página.
+A interface deve indicar uma chamada a `get_pokemon`, e os logs do contêiner
+devem mostrar a consulta ou o cache:
 
-### Cadastrar o servidor
+```bash
+docker compose logs pokemon-mcp-server | grep -E "consultando PokéAPI|cache hit"
+```
 
-A página documenta o arquivo de configuração `~/.codex/config.toml`, com uma
-tabela `[mcp_servers.<nome>]` por servidor. Para um servidor acessível por URL,
-o formato documentado usa a chave `url`:
+Referência: [documentação oficial do VS Code para servidores MCP](https://code.visualstudio.com/docs/copilot/customization/mcp-servers).
+
+## Codex
+
+O app desktop do ChatGPT, o Codex CLI e a extensão IDE compartilham a
+configuração MCP do mesmo Host Codex. O arquivo padrão do usuário é
+`~/.codex/config.toml`; projetos confiáveis também podem ter
+`.codex/config.toml`.
+
+### Configurar o Codex
+
+Adicione ao `config.toml` escolhido:
 
 ```toml
 [mcp_servers.pokemon-mcp]
 url = "http://localhost:8000/mcp"
 ```
 
-(As chaves `bearer_token_env_var` e `auth` que aparecem no exemplo oficial são
-para servidores com autenticação. Este laboratório não usa nenhuma, então elas
-ficam de fora.)
+O servidor não usa OAuth nem bearer token, portanto não precisa de campos de
+autenticação. Reinicie o cliente depois de salvar a configuração.
 
-**Não edite sua configuração pessoal no automático.** Faça uma cópia do arquivo
-antes e saiba o que está mudando. Para o `codex mcp add` a documentação mostra
-apenas a forma com servidor stdio
-(`codex mcp add <nome> -- <comando>`); para um servidor HTTP como este, o
-caminho documentado é o `config.toml` acima.
+No app desktop ou na extensão IDE, também é possível abrir a tela de servidores
+MCP, escolher **Streamable HTTP** e informar a mesma URL.
 
-### Os três estados que as pessoas confundem
+### Testar no Codex
 
-Este é o ponto da seção. São coisas diferentes, e só a terceira prova que o
-laboratório funcionou:
+No Codex CLI, confira o cadastro com:
 
-| Estado | O que significa | Como verificar |
-| --- | --- | --- |
-| **Cadastrado** | o servidor está escrito na configuração | `codex mcp list` mostra o servidor |
-| **Ativo na sessão** | o cliente conectou e descobriu as capacidades | no compositor, digite `/mcp` — a documentação descreve: *"In the composer, type `/mcp` to view connected servers."* |
-| **Tool chamada** | o modelo realmente executou `get_pokemon` | a interface indica a chamada da ferramenta **e** o log do servidor registra a consulta |
+```bash
+codex mcp list
+```
 
-Um servidor pode estar cadastrado e não conectar (`codex mcp list` mostra, mas
-`/mcp` não). Pode estar conectado e o modelo responder sem chamar nada — e aí a
-resposta veio da memória do modelo, não do seu servidor.
-
-Para ver os subcomandos disponíveis na sua versão, a documentação indica
-`codex mcp --help`. Nenhum outro comando é inventado aqui.
-
-### Teste final e a evidência certa
-
-Peça, de forma que não deixe escolha ao modelo:
+Na interface interativa, use `/mcp` para ver os servidores ativos. Depois peça:
 
 > Use obrigatoriamente o pokemon-mcp e consulte os dados do Pikachu.
 
-**A evidência correta não é a resposta estar certa.** Um modelo sabe de cor que
-Pikachu é do tipo elétrico e pode escrever isso sem tocar no seu servidor. A
-evidência é ver a Tool `get_pokemon` sendo chamada. Confirme dos dois lados:
+### Confirmar o Codex
 
-1. na interface do Codex, a indicação de que a ferramenta `get_pokemon` foi
-   executada, com os argumentos;
-2. no servidor, a linha correspondente no log:
+Existem três estados diferentes:
 
-   ```bash
-   docker compose logs pokemon-mcp-server | grep "consultando PokéAPI"
-   ```
+- **Cadastrado:** `codex mcp list` mostra a entrada da configuração.
+- **Conectado:** `/mcp` mostra que o cliente descobriu as capacidades.
+- **Tool executada:** a interface mostra `get_pokemon` e o log registra a
+  consulta.
 
-   Deve aparecer `consultando PokéAPI: https://pokeapi.co/api/v2/pokemon/pikachu/`
-   (ou `cache hit: pokemon/pikachu`, se a mesma consulta já tiver sido feita
-   dentro do TTL). O `source_url` na resposta é a terceira pista.
+Uma resposta correta sobre Pikachu não basta como prova: o modelo pode conhecer
+o assunto sem usar o servidor. Confirme a chamada na interface e nos logs.
 
-Se a resposta veio bonita e o log ficou vazio, o MCP não foi usado.
+Referência: [documentação oficial da OpenAI sobre MCP no Codex](https://learn.chatgpt.com/docs/extend/mcp).
 
-### Se o Codex não conectar
+## Confirmar o protocolo sem depender do cliente
 
-O Codex local precisa alcançar `http://localhost:8000/mcp` a partir da sua
-máquina. Antes de mexer na configuração, separe os dois problemas possíveis:
+Se você clonou o repositório, execute o smoke test:
 
 ```bash
-curl http://localhost:8000/health
+docker compose --profile test run --build --rm smoke
 ```
 
-- **O `curl` falha:** o problema é o servidor. Volte para `docker compose ps` e
-  para os logs; não é assunto do cliente.
-- **O `curl` funciona no terminal mas o Codex não conecta:** o servidor está no
-  ar e o problema está do lado do cliente. Investigue nessa ordem: a sandbox e
-  as permissões de rede do Codex (um agente em sandbox pode não ter acesso à
-  rede local), o caminho e a sintaxe do `config.toml`, se a sessão foi
-  reiniciada depois de editar o arquivo, e o `startup_timeout_sec` documentado
-  para servidores que demoram a subir. Olhe também o log do servidor ao
-  reproduzir: **HTTP 421** aponta `Host` fora da allowlist e **HTTP 403**,
-  `Origin` fora da allowlist. Log vazio significa que a requisição nunca
-  chegou.
+Ele conecta pelo endpoint HTTP, negocia o protocolo, descobre as capacidades,
+chama as três Tools, lê o Resource e obtém o Prompt. Uma execução bem-sucedida
+termina com `SMOKE TEST OK`.
 
-E o de sempre: **um cliente remoto ou na nuvem não alcança o seu `localhost`**,
-por mais correta que a configuração esteja. Se a sua sessão do Codex roda em
-servidor do fornecedor e não na sua máquina, não há configuração que resolva —
-veja a seção a seguir.
+Se o smoke passa e outro cliente falha, concentre o diagnóstico na
+configuração, versão, transporte ou permissões de rede desse cliente.
 
-## Aplicações hospedadas na nuvem não alcançam o seu localhost
+## Compatibilidade e alcance
 
-Um ponto que costuma gerar confusão na hora da demonstração:
+### O cliente precisa falar Streamable HTTP
 
-> `localhost` significa "esta máquina". Para um serviço que roda nos servidores
-> de um fornecedor, `localhost` é o servidor **dele**, não o seu computador.
+Nem todo cliente MCP oferece todos os transportes. Um cliente que aceita apenas
+servidores locais por `command` e `args` usa stdio e não conecta diretamente a
+este projeto.
 
-Portanto:
+Nem todo cliente exibe Resources e Prompts. É comum uma aplicação consumir
+somente Tools; isso não significa que o servidor deixou de anunciar as outras
+capacidades. Use o Inspector ou o smoke test para verificar o conjunto completo.
 
-- Uma aplicação de IA que roda **na sua máquina** (aplicativo de desktop, IDE,
-  terminal) alcança `http://localhost:8000/mcp` normalmente.
-- Uma aplicação que roda **no navegador contra um serviço em nuvem** não
-  alcança. Não existe configuração mágica: o pacote precisaria sair da internet
-  e entrar na sua máquina.
-- Expor o laboratório com um túnel público para contornar isso é justamente o
-  que **não** se deve fazer aqui: o servidor não tem autenticação e o Compose o
-  publica apenas em `127.0.0.1` de propósito.
+### `localhost` depende de onde o cliente roda
 
-Para a apresentação, use um cliente local (MCP Inspector ou uma aplicação de
-desktop) e capture os prints de lá.
+`localhost` significa “esta máquina”. Portanto:
 
-## Diagnóstico rápido
+- um cliente desktop, IDE ou terminal na sua máquina alcança o servidor;
+- uma aplicação executada em contêiner precisa de uma rota até o Host;
+- um serviço hospedado na nuvem não alcança o seu `localhost`.
 
-| Sintoma no cliente | O que olhar no servidor | Correção |
-| --- | --- | --- |
-| Erro genérico de transporte ao conectar | `docker compose logs pokemon-mcp-server` mostra `Invalid Host header` | O `Host` não está na allowlist. Use `localhost` ou `127.0.0.1`, ou acrescente o nome em `MCP_EXTRA_ALLOWED_HOSTS`. |
-| `403 Forbidden` | log mostra `Invalid Origin header` | Acrescente a origem exata a `MCP_EXTRA_ALLOWED_ORIGINS` no `.env`. |
-| Cadastrado no cliente, mas a Tool nunca é chamada | o log não mostra `consultando PokéAPI:` | Cadastrado ≠ ativo ≠ chamado. Veja [Codex local](#codex-local). |
-| Conecta, mas não lista ferramentas | as ferramentas aparecem no smoke test | O cliente provavelmente não requisitou `tools/list`; confira a tela de servidores MCP da aplicação. |
-| Conexão recusada | `docker compose ps` não mostra o contêiner | Suba o serviço com `docker compose up -d`. |
+Publicar a imagem no GHCR não muda isso. A imagem é um programa para download,
+não um servidor hospedado. Não abra um túnel público para este laboratório: ele
+não possui autenticação.
+
+## Host, Origin e porta
+
+O SDK valida os cabeçalhos `Host` e `Origin` para proteger o servidor local
+contra DNS rebinding:
+
+- Host fora da lista recebe HTTP 421;
+- Origin fora da lista recebe HTTP 403;
+- ausência de Origin é aceita para clientes que não são navegadores.
+
+### Mudar somente a porta
+
+Com Compose:
+
+```bash
+MCP_HOST_PORT=8001 docker compose up -d --build
+```
+
+O endpoint vira `http://localhost:8001/mcp`. O Compose acrescenta a porta às
+allowlists automaticamente; a porta interna do contêiner continua sendo 8000.
+
+### Permitir outro nome de Host
+
+No `.env`:
+
+```dotenv
+MCP_EXTRA_ALLOWED_HOSTS=meu-host.local:8000
+MCP_EXTRA_ALLOWED_ORIGINS=http://meu-host.local:8000
+```
+
+Esses valores são somados aos mínimos obrigatórios. Eles não removem
+`localhost` e `127.0.0.1`, nem desligam a proteção. Veja a lista final nos logs:
+
+```bash
+docker compose logs pokemon-mcp-server | grep allowlist
+```
+
+Não desligue a proteção para corrigir um erro de conexão. Autorize apenas o
+Host e a Origin exatos que o cliente realmente utiliza.
+
+## Diagnóstico
+
+- **Conexão recusada:** inicie o servidor e aguarde o estado `healthy`.
+- **`/health` funciona, mas MCP não:** execute o smoke test e revise o
+  transporte configurado no cliente.
+- **HTTP 421:** use `localhost` ou autorize o Host exato mostrado no log.
+- **HTTP 403:** autorize a Origin completa, incluindo esquema e porta.
+- **Servidor cadastrado, mas ausente:** reinicie o cliente e confira a URL.
+- **Tools não aparecem:** confirme com o smoke; o cliente pode não consumir
+  Tools ou MCP.
+- **Tool não é chamada:** peça explicitamente o uso do servidor e confira os
+  logs.
+- **Erro de PokéAPI:** confira a internet do contêiner e tente novamente.
+
+Comandos úteis:
+
+```bash
+docker compose ps
+curl http://localhost:8000/health
+docker compose logs -f pokemon-mcp-server
+docker compose --profile test run --build --rm smoke
+```
+
+## Próximos passos
+
+- [Entender o fluxo completo](como-funciona.md)
+- [Voltar ao README](../README.md)
+- [Consultar as versões e referências](versoes-e-referencias.md)
