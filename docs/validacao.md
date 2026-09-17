@@ -142,10 +142,12 @@ Registro da distribuição da imagem, em 17/09/2026. Esta seção é sobre o
 | Versão | Commit | Digest do índice multiarch | `latest` | Situação |
 | --- | --- | --- | --- | --- |
 | `0.1.0` | `1451c32` | `sha256:f54da006d027ed33c41a3ccf9f2815cf598176407f355c55b3371422542eb29e` | não | publicada e **intacta**; `title`/`description` OCI errados |
-| `0.1.1` | `7e0fb7f` | `sha256:3c7748f06aa647156a5152957b979bfc03f5694c6b8de29022e23a1baddca4b4` | passou a apontar | corrige os metadados OCI |
+| `0.1.1` | `7e0fb7f` | `sha256:3c7748f06aa647156a5152957b979bfc03f5694c6b8de29022e23a1baddca4b4` | não (foi substituída) | corrige os metadados OCI |
+| `0.1.2` | `9b08599` | `sha256:04505f07d0efbc91d914fabd6cce083733e59d77bb4d56c4315b3213d853d165` | **sim** | isola o projeto do Compose de consumo |
 
-A `0.1.0` **não foi regravada**: seu digest continua o mesmo depois da
-publicação da `0.1.1`. Foi conferido na API anônima do GHCR. Uma tag de versão
+Nenhuma tag de versão foi regravada: os digests da `0.1.0` e da `0.1.1`
+continuam os mesmos depois das publicações seguintes, conferido na API anônima
+do GHCR. Só o `latest` se moveu, sempre para a estável mais nova. Uma tag de versão
 distribuída é um contrato; a correção saiu como versão nova.
 
 O defeito da `0.1.0` só apareceu porque a verificação foi feita na imagem
@@ -159,11 +161,14 @@ automáticos (`title` = nome do repositório, `description` vazia).
 | --- | --- | --- |
 | `v0.1.0` | <https://github.com/higorcamposs/pokemon-mcp-server/actions/runs/35166058161> | `validar a release`: success · `publicar no GHCR`: success |
 | `v0.1.1` | <https://github.com/higorcamposs/pokemon-mcp-server/actions/runs/35166598151> | `validar a release`: success · `publicar no GHCR`: success |
+| `v0.1.2` | <https://github.com/higorcamposs/pokemon-mcp-server/actions/runs/35167077241> | `validar a release`: success · `publicar no GHCR`: success |
 
 CI `tests` do commit lançado em cada caso:
 `1451c32` → <https://github.com/higorcamposs/pokemon-mcp-server/actions/runs/35166005887> (success).
 
-### Verificações sobre a imagem baixada do GHCR (`0.1.1`)
+### Verificações sobre a imagem baixada do GHCR
+
+Repetidas na `0.1.1` e na `0.1.2`; os valores abaixo são os da `0.1.2`, a atual.
 
 | Verificação | Método | Resultado |
 | --- | --- | --- |
@@ -171,7 +176,7 @@ CI `tests` do commit lançado em cada caso:
 | Visibilidade do pacote | token anônimo do GHCR concedido | ✅ público |
 | Arquiteturas no índice | API anônima do registry | ✅ `linux/amd64` e `linux/arm64` |
 | `title` / `description` / `licenses` | `docker image inspect` | ✅ `Pokémon MCP Server`, descrição preenchida, `MIT` |
-| `version` / `revision` | `docker image inspect` | ✅ `0.1.1` / `7e0fb7f69d8baac02d26d8d259eb836a9c32ae09`, igual ao commit da tag |
+| `version` / `revision` | `docker image inspect` | ✅ igual ao commit da tag em cada versão (`0.1.1`→`7e0fb7f…`, `0.1.2`→`9b08599…`) |
 | Anotação do índice | API anônima do registry | ✅ `title` e `description` presentes no índice |
 | Usuário de execução | `docker exec ... id -un` | ✅ `pokemon` (não root) |
 | Licença embutida | `head -1 /app/LICENSE` | ✅ `MIT License` |
@@ -193,7 +198,7 @@ foram validados inicialização, `/health` e usuário — não o smoke completo.
 
 Cliente do SDK oficial, em contêiner separado (`uv` e `pytest` não existem no
 runtime, e não deveriam). Versão do protocolo negociada: **`2026-07-28`**.
-Servidor anunciado: `Pokémon MCP Server 0.1.1`.
+Servidor anunciado: `Pokémon MCP Server 0.1.2`.
 
 - [x] MCP Client conectou
 - [x] Tools foram descobertas
@@ -221,7 +226,7 @@ a allowlist acompanhando a porta escolhida —
 
 Este teste revelou que o `compose.ghcr.yaml` usava o mesmo nome de projeto do
 `compose.yaml`, de forma que um `down` no primeiro removia a rede do segundo.
-Corrigido na `0.1.2` com o projeto `pokemon-mcp-ghcr`.
+Corrigido na `0.1.2` com o projeto `pokemon-mcp-ghcr`, e revalidado.
 
 ## Evidências MCP
 
