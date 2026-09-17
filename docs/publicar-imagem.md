@@ -13,7 +13,7 @@ máquina de ninguém: é o Actions que constrói e envia, com o `GITHUB_TOKEN`.
 | Etapa | Job | O que garante |
 | --- | --- | --- |
 | Checkout da tag da release | `validate` | o que é publicado é o commit da tag, não o topo da branch |
-| Conferência da versão | `validate` | a tag, o `pyproject.toml` e a versão anunciada pelo servidor batem |
+| Conferência da versão | `validate` | a tag, o `pyproject.toml`, o `__init__.py` e a versão anunciada pelo servidor batem |
 | `uv sync --locked` + `pytest` | `validate` | a suíte passa com o lockfile **daquele commit** |
 | `docker build --target runtime` | `validate` | a imagem de execução constrói |
 | Subir o contêiner e checar `/health` e o usuário | `validate` | ela inicia, fica `healthy` e roda sem ser root |
@@ -29,13 +29,18 @@ no mesmo fluxo, sobre o commit que será publicado.
 
 ### 1. Escolher e alinhar a versão
 
-Três lugares precisam concordar, ou o job `validate` falha de propósito:
+Quatro lugares precisam concordar, ou o job `validate` falha de propósito:
 
-| Onde | Campo |
-| --- | --- |
-| `pyproject.toml` | `version = "X.Y.Z"` |
-| `src/pokemon_mcp/server.py` | `version="X.Y.Z"` no `MCPServer(...)` |
-| tag Git / release | `vX.Y.Z` |
+| Onde | Campo | Conferido pelo workflow? |
+| --- | --- | --- |
+| `pyproject.toml` | `version = "X.Y.Z"` | sim |
+| `src/pokemon_mcp/__init__.py` | `__version__ = "X.Y.Z"` | sim |
+| `src/pokemon_mcp/server.py` | `version="X.Y.Z"` no `MCPServer(...)` | sim |
+| tag Git / release | `vX.Y.Z` | é a referência |
+
+Vale alinhar também, embora o workflow não barre por eles: o `user_agent` em
+`src/pokemon_mcp/pokeapi.py`, as tags locais do `compose.yaml` e a tag padrão
+do `compose.ghcr.yaml`.
 
 Ao mudar a versão, atualize o lockfile do próprio projeto:
 
@@ -70,10 +75,10 @@ Confira o workflow `tests` do commit exato que vai ser lançado, na aba
 A release é o gatilho. Aponte-a para o commit conferido no passo anterior:
 
 ```bash
-gh release create v0.1.0 \
+gh release create v0.1.1 \
   --target <sha-do-commit> \
-  --title "v0.1.0" \
-  --notes "Primeira publicação da imagem no GHCR."
+  --title "v0.1.1" \
+  --notes "Descreva o que mudou nesta versão."
 ```
 
 Sem o `gh` autenticado, use **Releases → Draft a new release** na interface do
@@ -115,8 +120,8 @@ diretório de configuração temporário do Docker — assim o seu login pessoal
 
 ```bash
 TMPCFG="$(mktemp -d)"
-docker --config "$TMPCFG" pull ghcr.io/higorcamposs/pokemon-mcp-server:0.1.0
-docker --config "$TMPCFG" manifest inspect ghcr.io/higorcamposs/pokemon-mcp-server:0.1.0 \
+docker --config "$TMPCFG" pull ghcr.io/higorcamposs/pokemon-mcp-server:0.1.1
+docker --config "$TMPCFG" manifest inspect ghcr.io/higorcamposs/pokemon-mcp-server:0.1.1 \
   | grep -E '"architecture"|"os"'
 rm -rf "$TMPCFG"
 ```
@@ -133,12 +138,12 @@ passe os extras de allowlist correspondentes à porta escolhida:
 docker run -d --name pmcp-verify -p 127.0.0.1:8010:8000 \
   -e MCP_EXTRA_ALLOWED_HOSTS=localhost:8010,127.0.0.1:8010 \
   -e MCP_EXTRA_ALLOWED_ORIGINS=http://localhost:8010,http://127.0.0.1:8010 \
-  ghcr.io/higorcamposs/pokemon-mcp-server:0.1.0
+  ghcr.io/higorcamposs/pokemon-mcp-server:0.1.1
 
 curl http://localhost:8010/health
 docker inspect pmcp-verify --format '{{.State.Health.Status}}'
 docker exec pmcp-verify id -un          # precisa ser "pokemon", não root
-docker image inspect ghcr.io/higorcamposs/pokemon-mcp-server:0.1.0 \
+docker image inspect ghcr.io/higorcamposs/pokemon-mcp-server:0.1.1 \
   --format '{{json .Config.Labels}}'
 ```
 
@@ -175,7 +180,7 @@ tag. Use as notas da release ou um commit novo de documentação.
 
 ## Regras que não mudam
 
-- **Tag de versão não se regrava.** Quem baixou `:0.1.0` ontem precisa receber
+- **Tag de versão não se regrava.** Quem baixou `:0.1.1` ontem precisa receber
   os mesmos bytes hoje. O workflow recusa publicar sobre uma versão existente.
 - **`latest` é ponteiro móvel**, e só aponta para a versão estável mais nova.
   Nunca para prerelease, nunca para uma versão antiga publicada depois.

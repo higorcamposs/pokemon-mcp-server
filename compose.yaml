@@ -5,7 +5,7 @@ services:
     build:
       context: .
       target: runtime
-    image: pokemon-mcp-server:0.1.0
+    image: pokemon-mcp-server:0.1.1
     container_name: pokemon-mcp-server
     # Publica a porta SOMENTE no loopback da máquina. Este é um laboratório
     # local: não troque por "8000:8000", que exporia o serviço na rede.
@@ -69,7 +69,7 @@ services:
     build:
       context: .
       target: dev
-    image: pokemon-mcp-server:0.1.0-dev
+    image: pokemon-mcp-server:0.1.1-dev
     profiles: ["test"]
     command: ["uv", "run", "--no-sync", "pytest", "-v"]
 
@@ -81,7 +81,7 @@ services:
     build:
       context: .
       target: dev
-    image: pokemon-mcp-server:0.1.0-dev
+    image: pokemon-mcp-server:0.1.1-dev
     profiles: ["test"]
     network_mode: "service:pokemon-mcp-server"
     depends_on:

@@ -70,7 +70,7 @@ nada.
 
 ```bash
 docker run -d --name pokemon-mcp-server -p 127.0.0.1:8000:8000 \
-  ghcr.io/higorcamposs/pokemon-mcp-server:0.1.0
+  ghcr.io/higorcamposs/pokemon-mcp-server:0.1.1
 ```
 
 O `127.0.0.1:` no mapeamento não é detalhe: ele publica a porta **somente no
@@ -83,7 +83,7 @@ Endpoint MCP: **`http://localhost:8000/mcp`** (transporte Streamable HTTP).
 Baixe só o arquivo de consumo, de uma versão específica, numa pasta vazia:
 
 ```bash
-curl -O https://raw.githubusercontent.com/higorcamposs/pokemon-mcp-server/v0.1.0/compose.ghcr.yaml
+curl -O https://raw.githubusercontent.com/higorcamposs/pokemon-mcp-server/v0.1.1/compose.ghcr.yaml
 
 docker compose -f compose.ghcr.yaml pull
 docker compose -f compose.ghcr.yaml up -d
@@ -114,7 +114,7 @@ processo respondeu.
 
 | Forma | Quando usar |
 | --- | --- |
-| `:0.1.0` | **recomendado.** Versão explícita: você sabe o que está rodando e nada muda sozinho. Uma tag de versão publicada nunca é regravada. |
+| `:0.1.1` | **recomendado.** Versão explícita: você sabe o que está rodando e nada muda sozinho. Uma tag de versão publicada nunca é regravada. |
 | `:latest` | ponteiro móvel para a versão estável mais recente. Cômodo para experimentar, ruim para reproduzir: o conteúdo muda quando sai uma versão nova. |
 | `@sha256:<digest>` | imutável de verdade, identifica os bytes exatos. O digest de cada versão está nas notas da release e no resumo da execução do workflow de publicação. |
 

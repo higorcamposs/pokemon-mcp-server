@@ -60,17 +60,20 @@ jobs:
           # registry, outro.
           pyproject_version="$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)"
           server_version="$(grep -m1 'version="' src/pokemon_mcp/server.py | cut -d'"' -f2)"
+          package_version="$(grep -m1 '^__version__' src/pokemon_mcp/__init__.py | cut -d'"' -f2)"
 
-          echo "tag=$tag  pyproject=$pyproject_version  server=$server_version"
+          echo "tag=$tag  pyproject=$pyproject_version  server=$server_version  __init__=$package_version"
 
-          if [[ "$version" != "$pyproject_version" ]]; then
-            echo "::error::A tag ($version) não corresponde ao pyproject.toml ($pyproject_version)."
-            exit 1
-          fi
-          if [[ "$version" != "$server_version" ]]; then
-            echo "::error::A tag ($version) não corresponde à versão anunciada pelo servidor ($server_version)."
-            exit 1
-          fi
+          for pair in "pyproject.toml:$pyproject_version" \
+                      "servidor (MCPServer):$server_version" \
+                      "__init__.py:$package_version"; do
+            where="${pair%%:*}"
+            found="${pair##*:}"
+            if [[ "$version" != "$found" ]]; then
+              echo "::error::A tag ($version) não corresponde a $where ($found)."
+              exit 1
+            fi
+          done
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -170,18 +173,31 @@ jobs:
       - name: Montar tags e metadados OCI
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        env:
+          # Sem isto as anotações saem apenas nos manifests de cada
+          # arquitetura, e o GHCR mostra o pacote sem descrição, porque a
+          # página lê o ÍNDICE multiarch, não as imagens de dentro dele.
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index,manifest
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ needs.validate.outputs.version }}
             type=raw,value=latest,enable=${{ github.event.release.prerelease == false }}
+          # Estes labels precisam ser declarados aqui, e não só no Dockerfile:
+          # o build-push-action aplica o que vem desta action POR CIMA dos
+          # LABEL da imagem. Sem declará-los, valem os automáticos derivados do
+          # repositório — title vira "pokemon-mcp-server" e description fica
+          # vazia, porque o repositório não tem descrição no GitHub.
           labels: |
+            org.opencontainers.image.title=Pokémon MCP Server
+            org.opencontainers.image.description=MCP Server didático que expõe dados da PokéAPI como três Tools, um Resource e um Prompt por Streamable HTTP. Não embute modelo de linguagem.
+            org.opencontainers.image.licenses=MIT
             org.opencontainers.image.version=${{ needs.validate.outputs.version }}
             org.opencontainers.image.revision=${{ needs.validate.outputs.sha }}
-          # A anotação vai no índice multiarch: sem ela o GHCR mostra o pacote
-          # sem descrição, porque ele lê o índice, não as imagens de dentro.
           annotations: |
+            org.opencontainers.image.title=Pokémon MCP Server
             org.opencontainers.image.description=MCP Server didático que expõe dados da PokéAPI como três Tools, um Resource e um Prompt por Streamable HTTP. Não embute modelo de linguagem.
+            org.opencontainers.image.licenses=MIT
 
       - name: Construir e publicar (linux/amd64 + linux/arm64)
         id: build
