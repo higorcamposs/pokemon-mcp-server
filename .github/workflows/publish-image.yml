@@ -1,0 +1,232 @@
+# Publica a imagem de execução no GHCR quando uma release é publicada.
+#
+# Gatilho único de propósito: `release: published`. Usar também `push` de tag
+# faria o mesmo lançamento publicar duas vezes, em corrida uma com a outra.
+#
+# O que este fluxo NÃO faz: publicar o endpoint do servidor. Ele distribui uma
+# imagem; quem executa o contêiner continua sendo quem baixa.
+name: publish image
+
+on:
+  release:
+    types: [published]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Validar o commit EXATO que a release aponta.
+  #
+  # A CI verde de um commit anterior não vale como aprovação deste: tudo aqui
+  # roda sobre o código da tag, com o lockfile da tag.
+  # ---------------------------------------------------------------------------
+  validate:
+    name: validar a release
+    runs-on: ubuntu-latest
+    # Não publicar a partir de forks.
+    if: github.repository == 'higorcamposs/pokemon-mcp-server'
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - name: Checkout do commit da tag da release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+
+      - name: Conferir versão, formato e coerência com o projeto
+        id: version
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.release.tag_name }}"
+
+          # Formato aceito: vX.Y.Z, opcionalmente com sufixo de prerelease.
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::A tag '$tag' não tem o formato vX.Y.Z[-sufixo]."
+            exit 1
+          fi
+          version="${tag#v}"
+
+          # A versão do pacote, a anunciada pelo servidor e a tag têm de bater.
+          # Divergência aqui significa que o cliente MCP veria um número e o
+          # registry, outro.
+          pyproject_version="$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)"
+          server_version="$(grep -m1 'version="' src/pokemon_mcp/server.py | cut -d'"' -f2)"
+
+          echo "tag=$tag  pyproject=$pyproject_version  server=$server_version"
+
+          if [[ "$version" != "$pyproject_version" ]]; then
+            echo "::error::A tag ($version) não corresponde ao pyproject.toml ($pyproject_version)."
+            exit 1
+          fi
+          if [[ "$version" != "$server_version" ]]; then
+            echo "::error::A tag ($version) não corresponde à versão anunciada pelo servidor ($server_version)."
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+
+      - name: Instalar as dependências do lockfile deste commit
+        run: uv sync --locked
+
+      - name: Rodar a suíte automatizada
+        # Sem rede externa: as respostas da PokéAPI vêm de tests/fixtures.
+        run: uv run pytest -v
+
+      - name: Construir a imagem de execução (arquitetura do runner)
+        run: |
+          docker build \
+            --target runtime \
+            --build-arg VERSION="${{ steps.version.outputs.version }}" \
+            --build-arg REVISION="${{ steps.version.outputs.sha }}" \
+            -t pokemon-mcp-server:release-check \
+            .
+
+      - name: Subir o runtime e conferir /health
+        run: |
+          set -euo pipefail
+          docker run -d --name release-check -p 127.0.0.1:8000:8000 \
+            pokemon-mcp-server:release-check
+
+          for i in $(seq 1 30); do
+            status="$(docker inspect release-check --format '{{.State.Health.Status}}')"
+            echo "tentativa $i: $status"
+            [ "$status" = "healthy" ] && break
+            sleep 2
+          done
+
+          status="$(docker inspect release-check --format '{{.State.Health.Status}}')"
+          if [ "$status" != "healthy" ]; then
+            echo "::error::O HEALTHCHECK da imagem não ficou saudável (estado: $status)."
+            docker logs release-check
+            exit 1
+          fi
+
+          # Confere também pela rede, e não só pelo healthcheck interno.
+          curl -sf http://localhost:8000/health | tee /dev/stderr | grep -q '"status":"ok"'
+
+          # O processo precisa ser não root.
+          whoami_in_container="$(docker exec release-check id -un)"
+          echo "usuário do processo: $whoami_in_container"
+          [ "$whoami_in_container" != "root" ]
+
+          docker rm -f release-check
+
+  # ---------------------------------------------------------------------------
+  # 2. Publicar — só depois que a validação acima passou (needs).
+  # ---------------------------------------------------------------------------
+  publish:
+    name: publicar no GHCR
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # packages: write só existe neste job, não no fluxo inteiro.
+      packages: write
+    steps:
+      - name: Checkout do commit da tag da release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+
+      - name: Login no GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Recusar regravar uma tag de versão já publicada
+        # Uma tag de versão é um contrato: quem baixou :0.1.0 ontem precisa
+        # receber os mesmos bytes hoje. `latest` é ponteiro móvel e pode mudar.
+        run: |
+          set -euo pipefail
+          ref="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate.outputs.version }}"
+          if docker manifest inspect "$ref" > /dev/null 2>&1; then
+            echo "::error::$ref já existe no registry. Publique uma versão nova em vez de regravar esta."
+            exit 1
+          fi
+          echo "$ref ainda não existe: seguro publicar."
+
+      - name: Configurar QEMU (para construir linux/arm64 no runner amd64)
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Configurar Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Montar tags e metadados OCI
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ needs.validate.outputs.version }}
+            type=raw,value=latest,enable=${{ github.event.release.prerelease == false }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.validate.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.validate.outputs.sha }}
+          # A anotação vai no índice multiarch: sem ela o GHCR mostra o pacote
+          # sem descrição, porque ele lê o índice, não as imagens de dentro.
+          annotations: |
+            org.opencontainers.image.description=MCP Server didático que expõe dados da PokéAPI como três Tools, um Resource e um Prompt por Streamable HTTP. Não embute modelo de linguagem.
+
+      - name: Construir e publicar (linux/amd64 + linux/arm64)
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          # Explícito: a imagem distribuída é o runtime, nunca o estágio dev,
+          # que carrega pytest e a suíte de testes.
+          target: runtime
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          build-args: |
+            VERSION=${{ needs.validate.outputs.version }}
+            REVISION=${{ needs.validate.outputs.sha }}
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Registrar o resultado no resumo da execução
+        run: |
+          {
+            echo "## Imagem publicada"
+            echo
+            echo "| Item | Valor |"
+            echo "| --- | --- |"
+            echo "| Release | \`${{ github.event.release.tag_name }}\` |"
+            echo "| Versão | \`${{ needs.validate.outputs.version }}\` |"
+            echo "| Revisão (SHA) | \`${{ needs.validate.outputs.sha }}\` |"
+            echo "| Arquiteturas | \`linux/amd64\`, \`linux/arm64\` |"
+            echo "| Estágio | \`runtime\` |"
+            echo "| Digest do índice | \`${{ steps.build.outputs.digest }}\` |"
+            echo
+            echo "### Tags"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo
+            echo "### Baixar por digest (imutável)"
+            echo '```bash'
+            echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+            echo '```'
+            echo
+            echo "> Publicar a imagem **não** publica o endpoint do servidor."
+            echo "> Quem executa o contêiner continua sendo quem baixa."
+          } >> "$GITHUB_STEP_SUMMARY"

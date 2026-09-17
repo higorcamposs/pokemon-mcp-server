@@ -1,0 +1,71 @@
+# Pokémon MCP Server — consumo da imagem já publicada no GHCR.
+#
+# Este arquivo é AUTOSSUFICIENTE: baixe só ele numa pasta vazia e funcione.
+# Não precisa de clone, de .env, de Python nem de `uv` na máquina.
+#
+#   curl -O https://raw.githubusercontent.com/higorcamposs/pokemon-mcp-server/v0.1.0/compose.ghcr.yaml
+#   docker compose -f compose.ghcr.yaml pull
+#   docker compose -f compose.ghcr.yaml up -d
+#   docker compose -f compose.ghcr.yaml ps
+#   docker compose -f compose.ghcr.yaml logs -f
+#   docker compose -f compose.ghcr.yaml down
+#
+# Endpoint MCP: http://localhost:8000/mcp (transporte Streamable HTTP).
+#
+# Para DESENVOLVER ou modificar o servidor, use o compose.yaml do repositório,
+# que constrói a imagem a partir do código. Aqui não há `build:` de propósito.
+name: pokemon-mcp
+
+services:
+  pokemon-mcp-server:
+    # Versão explícita, não `latest`: você sabe o que está rodando, e uma
+    # publicação nova não troca a imagem debaixo de você sem aviso.
+    # Para fixar de forma realmente imutável, troque pela forma com digest:
+    #   image: ghcr.io/higorcamposs/pokemon-mcp-server@sha256:<digest>
+    # O digest de cada versão está nas notas da release.
+    image: ghcr.io/higorcamposs/pokemon-mcp-server:${MCP_IMAGE_TAG:-0.1.0}
+    container_name: pokemon-mcp-server
+
+    # Publica a porta SOMENTE no loopback da máquina. Não troque por
+    # "8000:8000": isso exporia o serviço na rede, e ele não tem autenticação.
+    #
+    # Dentro do contêiner a porta é sempre 8000; MCP_HOST_PORT muda apenas a
+    # porta publicada na sua máquina (use se a 8000 já estiver ocupada). Nesse
+    # caso o endpoint do cliente vira http://localhost:${MCP_HOST_PORT}/mcp.
+    ports:
+      - "127.0.0.1:${MCP_HOST_PORT:-8000}:8000"
+
+    environment:
+      # Todos com padrão: nenhuma variável é obrigatória e não existe .env aqui.
+      POKEAPI_BASE_URL: ${POKEAPI_BASE_URL:-https://pokeapi.co/api/v2/}
+      # Número finito e maior que zero.
+      POKEAPI_TIMEOUT_SECONDS: ${POKEAPI_TIMEOUT_SECONDS:-10}
+      # Número finito e não negativo; 0 desliga o cache.
+      POKEAPI_CACHE_TTL_SECONDS: ${POKEAPI_CACHE_TTL_SECONDS:-300}
+      # Inteiro não negativo; 0 desliga o cache.
+      POKEAPI_CACHE_MAX_ENTRIES: ${POKEAPI_CACHE_MAX_ENTRIES:-256}
+      MCP_LOG_LEVEL: ${MCP_LOG_LEVEL:-INFO}
+
+      # Allowlist de Host/Origin (proteção contra DNS rebinding), com as mesmas
+      # regras do compose.yaml de desenvolvimento: a porta interna 8000 e a
+      # porta publicada na máquina. Quando MCP_HOST_PORT=8000 as duas metades
+      # coincidem, e o servidor descarta as repetições.
+      MCP_ALLOWED_HOSTS: >-
+        127.0.0.1:8000,localhost:8000,[::1]:8000,
+        127.0.0.1:${MCP_HOST_PORT:-8000},localhost:${MCP_HOST_PORT:-8000},[::1]:${MCP_HOST_PORT:-8000}
+      MCP_ALLOWED_ORIGINS: >-
+        http://127.0.0.1:8000,http://localhost:8000,http://[::1]:8000,
+        http://127.0.0.1:${MCP_HOST_PORT:-8000},http://localhost:${MCP_HOST_PORT:-8000},http://[::1]:${MCP_HOST_PORT:-8000}
+      # Para liberar OUTRO nome de host, exporte estas duas antes de subir:
+      #   MCP_EXTRA_ALLOWED_HOSTS=meu-host.local:8000 \
+      #   MCP_EXTRA_ALLOWED_ORIGINS=http://meu-host.local:8000 \
+      #   docker compose -f compose.ghcr.yaml up -d
+      # O servidor SOMA estes valores aos de cima: acrescentar um host nunca
+      # remove localhost nem desliga a proteção.
+      MCP_EXTRA_ALLOWED_HOSTS: ${MCP_EXTRA_ALLOWED_HOSTS:-}
+      MCP_EXTRA_ALLOWED_ORIGINS: ${MCP_EXTRA_ALLOWED_ORIGINS:-}
+
+    # A imagem já traz o seu próprio HEALTHCHECK (Python/urllib em GET /health),
+    # então aqui não é preciso redeclará-lo. Ele confirma que o PROCESSO
+    # responde — não prova que o protocolo MCP funciona.
+    restart: unless-stopped

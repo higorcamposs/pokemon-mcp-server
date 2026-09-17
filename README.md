@@ -25,7 +25,8 @@ capacidades e devolve dados.
   toda aplicação de IA fala Streamable HTTP, e nem toda aplicação usa Resources
   ou Prompts.
 - **Publicar o código no GitHub não hospeda o servidor.** Quem executa o
-  contêiner é você, na sua máquina.
+  contêiner é você, na sua máquina. Publicar a *imagem* num registry também
+  não: distribuir o programa é diferente de manter um endereço no ar.
 
 ## Arquitetura
 
@@ -43,24 +44,113 @@ Aplicação de IA / Host
 O contêiner escuta em `0.0.0.0:8000` internamente, mas o Compose publica a
 porta **somente em `127.0.0.1`**. O serviço não fica acessível pela rede.
 
-## Obter o projeto
+## Pré-requisitos
+
+- Docker e Docker Compose (`docker compose version`).
+- Acesso à internet, para que o contêiner alcance a PokéAPI.
+
+**Não é preciso ter Python nem `uv` instalados na máquina**, nem chave de
+nenhum provedor de IA. Tudo roda dentro dos contêineres.
+
+Escolha o seu caminho:
+
+| | Para quem | Precisa clonar? |
+| --- | --- | --- |
+| **[A. Só quero usar](#a-só-quero-usar)** | quer o servidor no ar e um cliente MCP conectado | não |
+| **[B. Quero estudar ou modificar](#b-quero-estudar-ou-modificar)** | quer ler o código, rodar os testes, alterar o servidor | sim |
+
+---
+
+# A. Só quero usar
+
+A imagem é pública: baixe e execute, sem clonar o repositório e sem construir
+nada.
+
+### Baixar e executar
+
+```bash
+docker run -d --name pokemon-mcp-server -p 127.0.0.1:8000:8000 \
+  ghcr.io/higorcamposs/pokemon-mcp-server:0.1.0
+```
+
+O `127.0.0.1:` no mapeamento não é detalhe: ele publica a porta **somente no
+loopback**. O servidor não tem autenticação e não deve ficar acessível na rede.
+
+Endpoint MCP: **`http://localhost:8000/mcp`** (transporte Streamable HTTP).
+
+### Alternativa: Compose, também sem clonar
+
+Baixe só o arquivo de consumo, de uma versão específica, numa pasta vazia:
+
+```bash
+curl -O https://raw.githubusercontent.com/higorcamposs/pokemon-mcp-server/v0.1.0/compose.ghcr.yaml
+
+docker compose -f compose.ghcr.yaml pull
+docker compose -f compose.ghcr.yaml up -d
+docker compose -f compose.ghcr.yaml ps
+docker compose -f compose.ghcr.yaml logs -f
+docker compose -f compose.ghcr.yaml down
+```
+
+Sem `--build` em nenhum deles: você está baixando uma imagem pronta. O arquivo
+é autossuficiente — não precisa de `.env`, de código nem de mais nada do
+repositório. Se a porta 8000 estiver ocupada, use `MCP_HOST_PORT=8001 docker
+compose -f compose.ghcr.yaml up -d`; o endpoint vira `http://localhost:8001/mcp`.
+
+### Verificar, acompanhar e encerrar
+
+```bash
+docker ps                              # STATUS deve mostrar "(healthy)"
+curl http://localhost:8000/health      # {"status":"ok", ...}
+docker logs -f pokemon-mcp-server
+docker rm -f pokemon-mcp-server
+```
+
+`GET /health` é uma rota HTTP auxiliar: ela não consulta a PokéAPI, não é uma
+ferramenta MCP e **não prova que o protocolo MCP funciona**. Ela diz que o
+processo respondeu.
+
+### Qual tag usar
+
+| Forma | Quando usar |
+| --- | --- |
+| `:0.1.0` | **recomendado.** Versão explícita: você sabe o que está rodando e nada muda sozinho. Uma tag de versão publicada nunca é regravada. |
+| `:latest` | ponteiro móvel para a versão estável mais recente. Cômodo para experimentar, ruim para reproduzir: o conteúdo muda quando sai uma versão nova. |
+| `@sha256:<digest>` | imutável de verdade, identifica os bytes exatos. O digest de cada versão está nas notas da release e no resumo da execução do workflow de publicação. |
+
+O digest não é inventado aqui de propósito — copie o da release que você for
+usar.
+
+### Conectar um cliente MCP
+
+Aponte um cliente MCP compatível para `http://localhost:8000/mcp`, transporte
+**Streamable HTTP**, sem autenticação. O passo a passo (MCP Inspector e
+exemplos opcionais de configuração por aplicação) está em
+**[docs/conectar-cliente.md](docs/conectar-cliente.md)**.
+
+> ### Imagem pública ≠ endpoint público
+>
+> Publicar a imagem no GHCR significa que **qualquer pessoa pode baixá-la**.
+> Não significa que exista um servidor no ar em algum lugar.
+>
+> Quem executa o contêiner é você, na sua máquina, e o serviço continua
+> publicado apenas em `127.0.0.1`. Uma aplicação de IA hospedada na nuvem
+> **não** passa a alcançar o seu `localhost` por causa do GHCR — para ela,
+> `localhost` é o servidor dela. Veja
+> [docs/conectar-cliente.md](docs/conectar-cliente.md).
+
+---
+
+# B. Quero estudar ou modificar
+
+### Obter o projeto
 
 ```bash
 git clone https://github.com/higorcamposs/pokemon-mcp-server.git
 cd pokemon-mcp-server
 ```
 
-## Pré-requisitos
-
-- Docker e Docker Compose (`docker compose version`).
-- Acesso à internet, para que o contêiner alcance a PokéAPI.
-
-**Não é preciso ter Python nem `uv` instalados na máquina.** Tudo roda dentro
-dos contêineres, inclusive os testes.
-
-## Como usar
-
-### Iniciar
+### Iniciar a partir do código
 
 ```bash
 docker compose up -d --build
@@ -125,6 +215,14 @@ python scripts/smoke_test.py http://localhost:8000/mcp
 ```bash
 docker compose down
 ```
+
+### Publicar uma nova versão da imagem
+
+O procedimento de manutenção (versionar, testar, lançar a release, conferir o
+workflow, a visibilidade e o pull anônimo) está em
+**[docs/publicar-imagem.md](docs/publicar-imagem.md)**.
+
+---
 
 ## Capacidades expostas
 
@@ -215,12 +313,16 @@ pokemon-mcp-server/
 ├── scripts/smoke_test.py
 ├── docs/
 │   ├── conectar-cliente.md
+│   ├── publicar-imagem.md
 │   ├── roteiro-prints.md
 │   ├── validacao.md
 │   └── versoes-e-referencias.md
-├── .github/workflows/  # CI: instala o projeto e roda os testes
-├── Dockerfile          # runtime (não root) e dev (testes)
-├── compose.yaml
+├── .github/workflows/
+│   ├── tests.yml           # CI: instala o projeto e roda os testes
+│   └── publish-image.yml   # publica a imagem no GHCR a cada release
+├── Dockerfile          # runtime (não root, com HEALTHCHECK) e dev (testes)
+├── compose.yaml        # desenvolvimento: constrói a partir do código
+├── compose.ghcr.yaml   # consumo: usa a imagem publicada, sem build
 ├── pyproject.toml / uv.lock
 ├── LICENSE
 └── .env.example
